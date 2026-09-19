@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "SIMRS RSUD Bukit Kerman",
+  title: "E-KASIR RSUD Bukit Kerman",
   description: "Sistem Informasi Manajemen Rumah Sakit RSUD Bukit Kerman",
   manifest: "/manifest.json",
   appleWebApp: {
