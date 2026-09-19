@@ -1,0 +1,578 @@
+'use client';
+
+import { useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
+import { 
+  Pill, 
+  Search, 
+  CheckCircle2, 
+  XCircle, 
+  Trash2, 
+  Edit3, 
+  Lock, 
+  Unlock, 
+  Printer, 
+  Download, 
+  X, 
+  Save,
+  Eye,
+  FileSpreadsheet,
+  Clock,
+  TrendingUp,
+  ShieldCheck,
+  Filter,
+  FileText
+} from 'lucide-react';
+import { supabase } from '@/lib/supabase';
+import AdminHeader from '@/components/admin/AdminHeader';
+import AdminFooter from '@/components/admin/AdminFooter';
+
+interface DetailItem {
+  id?: number;
+  nama_obat_obhp: string;
+  jumlah: number;
+  harga_satuan: number;
+  subtotal: number;
+}
+
+interface RincianObatRecord {
+  id: number;
+  no_transaksi: string;
+  no_rm: string;
+  nama_pasien: string;
+  jenis_layanan: string;
+  penanggung_jawab_apotek: string;
+  total_biaya: number;
+  diskon?: number;
+  penjamin?: string;
+  status_verifikasi: string;
+  is_locked: boolean;
+  created_at: string;
+  rincian_obat_detail?: DetailItem[];
+}
+
+export default function AdminRincianObatPage() {
+  const router = useRouter();
+  const [records, setRecords] = useState<RincianObatRecord[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [searchTerm, setSearchTerm] = useState<string>('');
+  
+  // State Filter & Tab Admin
+  const [statusFilter, setStatusFilter] = useState<string>('semua');
+  const [serviceFilter, setServiceFilter] = useState<string>('semua');
+
+  // State Modal Detail Inspeksi
+  const [detailModalRecord, setDetailModalRecord] = useState<RincianObatRecord | null>(null);
+
+  // Super Admin Edit State
+  const [editingRecord, setEditingRecord] = useState<RincianObatRecord | null>(null);
+  const [editItems, setEditItems] = useState<DetailItem[]>([]);
+
+  const fetchRecords = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('rincian_obat_header')
+        .select(`
+          *,
+          rincian_obat_detail (*)
+        `)
+        .order('created_at', { ascending: false });
+
+      if (!error && data) {
+        setRecords(data as RincianObatRecord[]);
+      }
+    } catch (err) {
+      console.error('Gagal memuat data:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchRecords();
+
+    const channel = supabase
+      .channel('admin_realtime_rincian_obat')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'rincian_obat_header' }, () => {
+        fetchRecords();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [fetchRecords]);
+
+  const handleApprove = async (id: number) => {
+    await supabase.from('rincian_obat_header').update({ status_verifikasi: 'Disetujui' }).eq('id', id);
+    fetchRecords();
+  };
+
+  const handleReject = async (id: number) => {
+    await supabase.from('rincian_obat_header').update({ status_verifikasi: 'Ditolak' }).eq('id', id);
+    fetchRecords();
+  };
+
+  const handleToggleLock = async (id: number, currentLocked: boolean) => {
+    await supabase.from('rincian_obat_header').update({ is_locked: !currentLocked }).eq('id', id);
+    fetchRecords();
+  };
+
+  const handleDelete = async (id: number) => {
+    if (confirm('PERINGATAN SUPER ADMIN: Hapus permanen data rincian obat ini?')) {
+      await supabase.from('rincian_obat_header').delete().eq('id', id);
+      fetchRecords();
+    }
+  };
+
+  const handleOpenEditModal = (rec: RincianObatRecord) => {
+    setEditingRecord(rec);
+    setEditItems(rec.rincian_obat_detail || []);
+  };
+
+  const handleSaveSuperAdminEdit = async () => {
+    if (!editingRecord) return;
+    try {
+      const totalBaru = editItems.reduce((sum, item) => sum + (item.subtotal || 0), 0);
+
+      // Update Header
+      await supabase.from('rincian_obat_header').update({
+        nama_pasien: editingRecord.nama_pasien,
+        no_rm: editingRecord.no_rm,
+        jenis_layanan: editingRecord.jenis_layanan,
+        total_biaya: totalBaru
+      }).eq('id', editingRecord.id);
+
+      // Re-insert details
+      await supabase.from('rincian_obat_detail').delete().eq('header_id', editingRecord.id);
+      const detailsPayload = editItems.map(item => ({
+        header_id: editingRecord.id,
+        nama_obat_obhp: item.nama_obat_obhp,
+        jumlah: item.jumlah,
+        harga_satuan: item.harga_satuan,
+        subtotal: item.subtotal
+      }));
+      await supabase.from('rincian_obat_detail').insert(detailsPayload);
+
+      alert('Data berhasil diperbarui oleh Super Admin!');
+      setEditingRecord(null);
+      fetchRecords();
+    } catch (err: any) {
+      alert(`Gagal menyimpan perubahan: ${err.message}`);
+    }
+  };
+
+  const handleExportCSV = () => {
+    if (records.length === 0) return alert('Tidak ada data untuk diekspor.');
+    const headers = ["No Transaksi", "No RM", "Nama Pasien", "Layanan", "Penjamin", "Total Biaya", "Status Verifikasi"];
+    const rows = records.map(r => [
+      r.no_transaksi,
+      r.no_rm,
+      `"${r.nama_pasien}"`,
+      r.jenis_layanan,
+      r.penjamin || 'Umum',
+      r.total_biaya,
+      r.status_verifikasi
+    ]);
+
+    const csvContent = "data:text/csv;charset=utf-8," 
+      + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `Audit_Rincian_Obat_RSUD_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const formatRupiah = (num: number) => {
+    return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(num || 0);
+  };
+
+  const filteredRecords = records.filter(r => {
+    const matchSearch = r.nama_pasien.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      r.no_rm.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      r.no_transaksi.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    const matchStatus = 
+      statusFilter === 'semua' ? true :
+      statusFilter === 'pending' ? r.status_verifikasi === 'Menunggu Verifikasi' :
+      statusFilter === 'disetujui' ? r.status_verifikasi === 'Disetujui' :
+      statusFilter === 'ditolak' ? r.status_verifikasi === 'Ditolak' : true;
+
+    const matchService = 
+      serviceFilter === 'semua' ? true :
+      r.jenis_layanan.toLowerCase() === serviceFilter.toLowerCase();
+
+    return matchSearch && matchStatus && matchService;
+  });
+
+  const totalPending = records.filter(r => r.status_verifikasi === 'Menunggu Verifikasi').length;
+  const totalDisetujui = records.filter(r => r.status_verifikasi === 'Disetujui').length;
+  const totalNominal = records.reduce((acc, curr) => acc + (curr.total_biaya || 0), 0);
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col justify-between selection:bg-purple-500 selection:text-white">
+      <AdminHeader 
+        title="RSUD BUKIT KERMAN" 
+        subtitle="Control & Super Admin Verification Rincian Obat"
+        badgeText="Super Admin"
+        showBackButton={true}
+      />
+
+      <main className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-8 flex-1 space-y-6">
+        
+        {/* TOP BAR ACTION */}
+        <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-xl font-black text-slate-900 tracking-tight flex items-center gap-2">
+              <Pill className="w-6 h-6 text-purple-600" /> Audit &amp; Kontrol Rincian Obat (Super Admin)
+            </h1>
+            <p className="text-xs text-slate-500 mt-0.5">Super Admin memiliki wewenang penuh untuk mengubah, menyetujui, menolak, dan membuka kunci transaksi kasir.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleExportCSV}
+              className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs px-3.5 py-3 rounded-2xl transition flex items-center gap-1.5 cursor-pointer"
+              title="Unduh Laporan Audit CSV"
+            >
+              <FileSpreadsheet className="w-4 h-4 text-purple-600" /> Ekspor Audit
+            </button>
+          </div>
+        </div>
+
+        {/* METRIK STATISTIK AUDIT */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="bg-white border border-slate-200/80 p-4 rounded-2xl shadow-sm flex items-center justify-between">
+            <div>
+              <span className="text-[11px] font-bold text-slate-400 uppercase">Total Berkas</span>
+              <h3 className="text-lg font-black text-slate-900">{records.length} Transaksi</h3>
+            </div>
+            <div className="w-10 h-10 bg-purple-50 text-purple-600 rounded-xl flex items-center justify-center font-bold">
+              <FileText className="w-5 h-5" />
+            </div>
+          </div>
+
+          <div className="bg-white border border-slate-200/80 p-4 rounded-2xl shadow-sm flex items-center justify-between">
+            <div>
+              <span className="text-[11px] font-bold text-slate-400 uppercase">Menunggu Verifikasi</span>
+              <h3 className="text-lg font-black text-amber-600">{totalPending} Berkas</h3>
+            </div>
+            <div className="w-10 h-10 bg-amber-50 text-amber-600 rounded-xl flex items-center justify-center font-bold">
+              <Clock className="w-5 h-5" />
+            </div>
+          </div>
+
+          <div className="bg-white border border-slate-200/80 p-4 rounded-2xl shadow-sm flex items-center justify-between">
+            <div>
+              <span className="text-[11px] font-bold text-slate-400 uppercase">Disetujui Auditor</span>
+              <h3 className="text-lg font-black text-emerald-600">{totalDisetujui} Berkas</h3>
+            </div>
+            <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center font-bold">
+              <CheckCircle2 className="w-5 h-5" />
+            </div>
+          </div>
+
+          <div className="bg-white border border-slate-200/80 p-4 rounded-2xl shadow-sm flex items-center justify-between">
+            <div>
+              <span className="text-[11px] font-bold text-slate-400 uppercase">Akumulasi Finansial</span>
+              <h3 className="text-sm font-black font-mono text-slate-900">{formatRupiah(totalNominal)}</h3>
+            </div>
+            <div className="w-10 h-10 bg-sky-50 text-sky-600 rounded-xl flex items-center justify-center font-bold">
+              <TrendingUp className="w-5 h-5" />
+            </div>
+          </div>
+        </div>
+
+        {/* KONTEN TABEL & FILTER */}
+        <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm space-y-4">
+          <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+            <div className="relative flex-1 max-w-xs w-full">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder="Cari transaksi, RM, pasien..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-2xl pl-9 pr-4 py-2 text-xs focus:outline-none"
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-2xl text-xs font-bold">
+                <button onClick={() => setServiceFilter('semua')} className={`px-2.5 py-1.5 rounded-xl transition cursor-pointer ${serviceFilter === 'semua' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>Semua Layanan</button>
+                <button onClick={() => setServiceFilter('Rawat Jalan')} className={`px-2.5 py-1.5 rounded-xl transition cursor-pointer ${serviceFilter === 'Rawat Jalan' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>Rawat Jalan</button>
+                <button onClick={() => setServiceFilter('Rawat Inap')} className={`px-2.5 py-1.5 rounded-xl transition cursor-pointer ${serviceFilter === 'Rawat Inap' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>Rawat Inap</button>
+                <button onClick={() => setServiceFilter('IGD')} className={`px-2.5 py-1.5 rounded-xl transition cursor-pointer ${serviceFilter === 'IGD' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>IGD</button>
+              </div>
+
+              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-2xl text-xs font-bold">
+                <button onClick={() => setStatusFilter('semua')} className={`px-3 py-1.5 rounded-xl transition cursor-pointer ${statusFilter === 'semua' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>Semua Status</button>
+                <button onClick={() => setStatusFilter('pending')} className={`px-3 py-1.5 rounded-xl transition cursor-pointer ${statusFilter === 'pending' ? 'bg-white text-amber-700 shadow-sm' : 'text-slate-500'}`}>Pending</button>
+                <button onClick={() => setStatusFilter('disetujui')} className={`px-3 py-1.5 rounded-xl transition cursor-pointer ${statusFilter === 'disetujui' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500'}`}>Disetujui</button>
+              </div>
+            </div>
+          </div>
+
+          <div className="border border-slate-200 rounded-2xl overflow-hidden">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="bg-slate-100 text-slate-700 font-black uppercase border-b border-slate-200 text-[10px]">
+                  <th className="p-3.5">ID / Transaksi</th>
+                  <th className="p-3.5">Pasien &amp; RM</th>
+                  <th className="p-3.5">Layanan</th>
+                  <th className="p-3.5 text-right">Total Biaya</th>
+                  <th className="p-3.5 text-center">Akses Kunci</th>
+                  <th className="p-3.5 text-center">Status Verifikasi</th>
+                  <th className="p-3.5 text-center">Aksi Super Admin</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 font-medium">
+                {isLoading ? (
+                  <tr><td colSpan={7} className="text-center py-6 text-slate-400">Memuat data...</td></tr>
+                ) : filteredRecords.length === 0 ? (
+                  <tr><td colSpan={7} className="text-center py-6 text-slate-400">Tidak ada data rincian obat.</td></tr>
+                ) : (
+                  filteredRecords.map((r) => (
+                    <tr key={r.id} className="hover:bg-slate-50">
+                      <td className="p-3.5 font-mono font-bold text-slate-900">
+                        {r.no_transaksi}
+                        <span className="block text-[10px] text-slate-400 font-normal">{new Date(r.created_at).toLocaleDateString('id-ID')}</span>
+                      </td>
+                      <td className="p-3.5">
+                        <strong className="block text-slate-800">{r.nama_pasien}</strong>
+                        <span className="text-[10px] text-amber-700 font-mono">{r.no_rm}</span>
+                      </td>
+                      <td className="p-3.5">
+                        <span className="block font-bold text-slate-700">{r.jenis_layanan}</span>
+                        <span className="text-[10px] text-slate-500">{r.penjamin || 'Umum'}</span>
+                      </td>
+                      <td className="p-3.5 text-right font-mono font-black text-slate-900">{formatRupiah(r.total_biaya)}</td>
+                      <td className="p-3.5 text-center">
+                        <button
+                          onClick={() => handleToggleLock(r.id, r.is_locked)}
+                          className={`p-1.5 rounded-xl border transition cursor-pointer text-[10px] font-bold flex items-center gap-1 mx-auto ${
+                            r.is_locked ? 'bg-amber-50 text-amber-800 border-amber-300' : 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                          }`}
+                          title="Klik untuk ubah status kunci kasir"
+                        >
+                          {r.is_locked ? <Lock className="w-3.5 h-3.5 text-amber-600" /> : <Unlock className="w-3.5 h-3.5 text-emerald-600" />}
+                          <span>{r.is_locked ? 'Locked' : 'Unlocked'}</span>
+                        </button>
+                      </td>
+                      <td className="p-3.5 text-center">
+                        <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full uppercase ${
+                          r.status_verifikasi === 'Disetujui' ? 'bg-emerald-100 text-emerald-800' :
+                          r.status_verifikasi === 'Ditolak' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'
+                        }`}>
+                          {r.status_verifikasi}
+                        </span>
+                      </td>
+                      <td className="p-3.5 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            onClick={() => setDetailModalRecord(r)}
+                            className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition cursor-pointer"
+                            title="Inspeksi Rincian"
+                          >
+                            <Eye className="w-3.5 h-3.5 text-purple-600" />
+                          </button>
+                          <button
+                            onClick={() => handleApprove(r.id)}
+                            className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl transition cursor-pointer"
+                            title="Setujui"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleReject(r.id)}
+                            className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl transition cursor-pointer"
+                            title="Tolak"
+                          >
+                            <XCircle className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleOpenEditModal(r)}
+                            className="p-1.5 bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-xl transition cursor-pointer"
+                            title="Edit Data (Super Admin)"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleDelete(r.id)}
+                            className="p-1.5 bg-slate-100 hover:bg-rose-100 text-slate-500 hover:text-rose-700 rounded-xl transition cursor-pointer"
+                            title="Hapus"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </main>
+
+      {/* MODAL INSPEKSI DETAIL TRANSAKSI */}
+      {detailModalRecord && (
+        <div className="fixed inset-0 z-60 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 space-y-4 max-h-[85vh] flex flex-col">
+            <div className="flex justify-between items-center border-b pb-3">
+              <div>
+                <h3 className="text-sm font-black uppercase text-slate-900 flex items-center gap-1.5">
+                  <Pill className="w-4 h-4 text-purple-600" /> Detail Rincian Obat: {detailModalRecord.nama_pasien}
+                </h3>
+                <span className="text-xs text-slate-500 font-mono">No. Transaksi: {detailModalRecord.no_transaksi} | RM: {detailModalRecord.no_rm}</span>
+              </div>
+              <button onClick={() => setDetailModalRecord(null)} className="p-1 hover:bg-slate-100 rounded-full cursor-pointer">
+                <X className="w-5 h-5 text-slate-500" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto space-y-2 pr-1 flex-1 text-xs">
+              <div className="border rounded-2xl overflow-hidden">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-slate-100 font-bold uppercase text-[10px]">
+                      <th className="p-2.5">Nama Obat / OBHP</th>
+                      <th className="p-2.5 w-16 text-center">Qty</th>
+                      <th className="p-2.5 w-28 text-right">Subtotal</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y font-medium">
+                    {detailModalRecord.rincian_obat_detail?.map((item, i) => (
+                      <tr key={i}>
+                        <td className="p-2.5 font-bold uppercase">{item.nama_obat_obhp}</td>
+                        <td className="p-2.5 text-center font-mono">{item.jumlah}</td>
+                        <td className="p-2.5 text-right font-mono">{formatRupiah(item.subtotal)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="pt-3 border-t flex justify-between items-center text-xs">
+              <span className="font-bold text-slate-600">Total Biaya: <strong className="font-mono text-slate-900">{formatRupiah(detailModalRecord.total_biaya)}</strong></span>
+              <button
+                onClick={() => setDetailModalRecord(null)}
+                className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-xl cursor-pointer"
+              >
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL EDIT SUPER ADMIN */}
+      {editingRecord && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between border-b pb-3">
+              <h3 className="text-sm font-black uppercase text-slate-900">Edit Rincian Obat — Super Admin Hak Akses</h3>
+              <button onClick={() => setEditingRecord(null)} className="p-1 hover:bg-slate-100 rounded-full cursor-pointer">
+                <X className="w-5 h-5 text-slate-500" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Nama Pasien</label>
+                  <input
+                    type="text"
+                    value={editingRecord.nama_pasien}
+                    onChange={(e) => setEditingRecord({ ...editingRecord, nama_pasien: e.target.value })}
+                    className="w-full bg-slate-50 border rounded-xl p-2 font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">No RM</label>
+                  <input
+                    type="text"
+                    value={editingRecord.no_rm}
+                    onChange={(e) => setEditingRecord({ ...editingRecord, no_rm: e.target.value })}
+                    className="w-full bg-slate-50 border rounded-xl p-2 font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="border rounded-2xl overflow-hidden">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-slate-100 font-bold uppercase text-[10px]">
+                      <th className="p-2">Nama Obat/OBHP</th>
+                      <th className="p-2 w-16 text-center">Qty</th>
+                      <th className="p-2 w-28 text-right">Harga</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y font-medium">
+                    {editItems.map((item, idx) => (
+                      <tr key={idx}>
+                        <td className="p-2">
+                          <input
+                            type="text"
+                            value={item.nama_obat_obhp}
+                            onChange={(e) => {
+                              const updated = [...editItems];
+                              updated[idx].nama_obat_obhp = e.target.value;
+                              setEditItems(updated);
+                            }}
+                            className="w-full border rounded p-1 font-bold"
+                          />
+                        </td>
+                        <td className="p-2">
+                          <input
+                            type="number"
+                            value={item.jumlah}
+                            onChange={(e) => {
+                              const updated = [...editItems];
+                              updated[idx].jumlah = Number(e.target.value);
+                              updated[idx].subtotal = updated[idx].jumlah * updated[idx].harga_satuan;
+                              setEditItems(updated);
+                            }}
+                            className="w-full border rounded p-1 text-center font-mono"
+                          />
+                        </td>
+                        <td className="p-2">
+                          <input
+                            type="number"
+                            value={item.harga_satuan}
+                            onChange={(e) => {
+                              const updated = [...editItems];
+                              updated[idx].harga_satuan = Number(e.target.value);
+                              updated[idx].subtotal = updated[idx].jumlah * updated[idx].harga_satuan;
+                              setEditItems(updated);
+                            }}
+                            className="w-full border rounded p-1 text-right font-mono"
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t">
+              <button onClick={() => setEditingRecord(null)} className="px-4 py-2 bg-slate-200 text-slate-700 rounded-xl text-xs font-bold cursor-pointer">Batal</button>
+              <button onClick={handleSaveSuperAdminEdit} className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold shadow cursor-pointer flex items-center gap-1">
+                <Save className="w-4 h-4" /> Simpan Perubahan Super Admin
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <AdminFooter />
+    </div>
+  );
+}

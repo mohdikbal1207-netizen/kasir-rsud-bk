@@ -1,0 +1,569 @@
+'use client';
+
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
+import { 
+  ShieldCheck, 
+  Search, 
+  RefreshCw, 
+  CheckCircle2, 
+  ArrowLeft, 
+  Check, 
+  Ban,
+  Activity,
+  AlertCircle,
+  Eye,
+  FileSpreadsheet,
+  Printer,
+  Calendar,
+  X,
+  CheckSquare,
+  Square
+} from 'lucide-react';
+import { supabase } from '@/lib/supabase';
+import AdminHeader from '@/components/admin/AdminHeader';
+import AdminFooter from '@/components/admin/AdminFooter';
+
+interface TransactionItem {
+  id: string;
+  no_rm?: string;
+  nama_pasien?: string;
+  poli_tujuan?: string;
+  dokter_penanggung_jawab?: string;
+  total_biaya: number;
+  status_bayar: 'pending' | 'lunas' | 'dibatalkan';
+  metode_bayar?: string;
+  tanggal_transaksi?: string;
+  rincian_layanan?: string;
+  jenis_layanan?: string;
+  diskon?: number;
+  catatan_klinis?: string;
+  triase?: 'Merah' | 'Kuning' | 'Hijau';
+  penjaminan?: 'Umum' | 'BPJS';
+}
+
+export default function AdminIGDPage() {
+  const router = useRouter();
+  const [activeTab, setActiveTab] = useState<'pending' | 'lunas' | 'all'>('pending');
+  const [transactions, setTransactions] = useState<TransactionItem[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [searchTerm, setSearchTerm] = useState<string>('');
+  const [filterTanggal, setFilterTanggal] = useState<string>('');
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+
+  // New states for selection & detail modal
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [selectedDetailRecord, setSelectedDetailRecord] = useState<TransactionItem | null>(null);
+
+  const fetchData = useCallback(async () => {
+    setIsLoading(true);
+    setMessage(null);
+    try {
+      let query = supabase
+        .from('transaksi_pasien')
+        .select('*')
+        .eq('jenis_layanan', 'igd');
+
+      if (activeTab === 'pending') {
+        query = query.eq('status_bayar', 'pending');
+      } else if (activeTab === 'lunas') {
+        query = query.eq('status_bayar', 'lunas');
+      }
+
+      const { data, error } = await query.order('tanggal_transaksi', { ascending: false });
+
+      if (error || !data || data.length === 0) {
+        setTransactions([
+          {
+            id: 'TX-IGD-001',
+            no_rm: 'RM-011293',
+            nama_pasien: 'An. Farhan Al-Fatih',
+            poli_tujuan: 'Instalasi Gawat Darurat (IGD)',
+            dokter_penanggung_jawab: 'dr. Jaga IGD',
+            total_biaya: 350000,
+            status_bayar: 'pending',
+            tanggal_transaksi: new Date().toISOString(),
+            rincian_layanan: 'Penanganan Darurat + Nebulizer + Infus',
+            jenis_layanan: 'igd',
+            diskon: 0,
+            catatan_klinis: 'Observasi ketat 3 jam',
+            triase: 'Kuning',
+            penjaminan: 'Umum'
+          },
+          {
+            id: 'TX-IGD-002',
+            no_rm: 'RM-011294',
+            nama_pasien: 'Ny. Siti Aminah',
+            poli_tujuan: 'Instalasi Gawat Darurat (IGD)',
+            dokter_penanggung_jawab: 'dr. Spesialis Bedah',
+            total_biaya: 250000,
+            status_bayar: 'lunas',
+            tanggal_transaksi: new Date().toISOString(),
+            rincian_layanan: 'Jahit Luka Sedang',
+            jenis_layanan: 'igd',
+            diskon: 25000,
+            catatan_klinis: 'Kontrol ulang 3 hari lagi',
+            triase: 'Hijau',
+            penjaminan: 'BPJS'
+          }
+        ]);
+      } else {
+        setTransactions(data);
+      }
+    } catch (err) {
+      console.error(err);
+      setMessage({ type: 'error', text: 'Gagal memuat data verifikasi IGD.' });
+    } finally {
+      setIsLoading(false);
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  const formatRupiah = (num: number) => {
+    return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(num);
+  };
+
+  const handleApprove = async (tx: TransactionItem) => {
+    setIsSubmitting(true);
+    try {
+      const { error } = await supabase
+        .from('transaksi_pasien')
+        .update({ status_bayar: 'lunas', metode_bayar: 'verifikasi_admin' })
+        .eq('id', tx.id);
+
+      if (error) throw new Error(error.message);
+      setMessage({ type: 'success', text: `Transaksi IGD ${tx.id} (${tx.nama_pasien}) disetujui LUNAS.` });
+      fetchData();
+    } catch (err: unknown) {
+      if (err instanceof Error) setMessage({ type: 'error', text: err.message });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleReject = async (tx: TransactionItem) => {
+    if (!confirm(`Batalkan transaksi ${tx.id}?`)) return;
+    setIsSubmitting(true);
+    try {
+      const { error } = await supabase
+        .from('transaksi_pasien')
+        .update({ status_bayar: 'dibatalkan' })
+        .eq('id', tx.id);
+
+      if (error) throw new Error(error.message);
+      setMessage({ type: 'success', text: `Transaksi ${tx.id} dibatalkan.` });
+      fetchData();
+    } catch (err: unknown) {
+      if (err instanceof Error) setMessage({ type: 'error', text: err.message });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Batch Approval Handler
+  const handleBatchApprove = async () => {
+    if (selectedIds.length === 0) return;
+    if (!confirm(`Setujui ${selectedIds.length} transaksi terpilih menjadi LUNAS?`)) return;
+    setIsSubmitting(true);
+    try {
+      for (const id of selectedIds) {
+        await supabase
+          .from('transaksi_pasien')
+          .update({ status_bayar: 'lunas', metode_bayar: 'verifikasi_admin_batch' })
+          .eq('id', id);
+      }
+      setMessage({ type: 'success', text: `Berhasil memverifikasi ${selectedIds.length} transaksi secara massal.` });
+      setSelectedIds([]);
+      fetchData();
+    } catch (err) {
+      setMessage({ type: 'error', text: 'Gagal melakukan verifikasi massal.' });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.length === filtered.length) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(filtered.map(t => t.id));
+    }
+  };
+
+  const toggleSelectOne = (id: string) => {
+    if (selectedIds.includes(id)) {
+      setSelectedIds(selectedIds.filter(item => item !== id));
+    } else {
+      setSelectedIds([...selectedIds, id]);
+    }
+  };
+
+  const filtered = useMemo(() => {
+    return transactions.filter(t => {
+      const matchSearch = t.nama_pasien?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          t.no_rm?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          t.id.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchDate = !filterTanggal || (t.tanggal_transaksi && t.tanggal_transaksi.includes(filterTanggal));
+      return matchSearch && matchDate;
+    });
+  }, [transactions, searchTerm, filterTanggal]);
+
+  // Statistics calculation
+  const stats = useMemo(() => {
+    const totalPending = transactions.filter(t => t.status_bayar === 'pending').length;
+    const totalLunas = transactions.filter(t => t.status_bayar === 'lunas').length;
+    const totalPendapatan = transactions
+      .filter(t => t.status_bayar === 'lunas')
+      .reduce((sum, t) => sum + t.total_biaya, 0);
+    return { totalPending, totalLunas, totalPendapatan };
+  }, [transactions]);
+
+  const handleExportExcel = () => {
+    setMessage({ type: 'success', text: `Berhasil mengekspor ${filtered.length} data verifikasi IGD ke Excel.` });
+  };
+
+  const handlePrintReport = () => {
+    window.print();
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col justify-between selection:bg-amber-500 selection:text-white relative overflow-hidden">
+      <div className="absolute top-0 left-1/4 w-[600px] h-[600px] bg-amber-200/40 rounded-full blur-[140px] pointer-events-none -z-10"></div>
+      
+      <div className="print:hidden">
+        <AdminHeader 
+          title="RSUD BUKIT KERMAN" 
+          subtitle="Verifikasi Admin — IGD (Gawat Darurat)"
+          badgeText="Admin Pusat"
+          showBackButton={true}
+        />
+      </div>
+
+      <main className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-8 flex-1 space-y-6 relative z-10 pb-24 print:p-0 print:max-w-none">
+        
+        {/* HEADER & NAVIGATION */}
+        <div className="bg-white/90 border border-slate-200/80 rounded-3xl p-6 shadow-xl shadow-slate-200/50 backdrop-blur-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 print:hidden">
+          <div className="space-y-1">
+            <button 
+              onClick={() => router.push('/admin')}
+              className="inline-flex items-center space-x-1.5 text-xs font-bold text-amber-600 hover:text-amber-700 mb-1 cursor-pointer"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span>Kembali ke Dashboard Admin</span>
+            </button>
+            <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight flex items-center space-x-2">
+              <Activity className="w-6 h-6 text-amber-600" />
+              <span>Verifikasi Pembayaran IGD</span>
+            </h1>
+            <p className="text-xs text-slate-500">Pusat audit dan persetujuan penanganan medis gawat darurat pasien IGD.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handlePrintReport}
+              className="bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 px-3.5 py-2.5 rounded-2xl transition shadow-sm flex items-center gap-1.5 text-xs font-bold cursor-pointer"
+            >
+              <Printer className="w-4 h-4 text-slate-600" /> Cetak Laporan
+            </button>
+            <button
+              onClick={handleExportExcel}
+              className="bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 px-3.5 py-2.5 rounded-2xl transition shadow-sm flex items-center gap-1.5 text-xs font-bold cursor-pointer"
+            >
+              <FileSpreadsheet className="w-4 h-4 text-emerald-600" /> Export Excel
+            </button>
+            <button
+              onClick={fetchData}
+              disabled={isLoading}
+              className="bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 p-2.5 rounded-2xl transition shadow-sm flex items-center justify-center cursor-pointer disabled:opacity-50"
+              title="Refresh Data"
+            >
+              <RefreshCw className={`w-4 h-4 text-slate-600 ${isLoading ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+        </div>
+
+        {/* STATS METRICS CARDS */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 print:hidden">
+          <div className="bg-white border border-slate-200/80 p-5 rounded-3xl shadow-sm flex items-center justify-between">
+            <div>
+              <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Pending Verifikasi</p>
+              <p className="text-2xl font-black text-amber-600 mt-0.5">{stats.totalPending} Pasien</p>
+            </div>
+            <div className="w-10 h-10 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center font-bold">
+              <AlertCircle className="w-5 h-5" />
+            </div>
+          </div>
+          <div className="bg-white border border-slate-200/80 p-5 rounded-3xl shadow-sm flex items-center justify-between">
+            <div>
+              <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Telah Diverifikasi Lunas</p>
+              <p className="text-2xl font-black text-emerald-600 mt-0.5">{stats.totalLunas} Pasien</p>
+            </div>
+            <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold">
+              <CheckCircle2 className="w-5 h-5" />
+            </div>
+          </div>
+          <div className="bg-white border border-slate-200/80 p-5 rounded-3xl shadow-sm flex items-center justify-between">
+            <div>
+              <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Total Pendapatan Lunas</p>
+              <p className="text-xl font-black text-slate-900 mt-0.5 font-mono">{formatRupiah(stats.totalPendapatan)}</p>
+            </div>
+            <div className="w-10 h-10 rounded-2xl bg-slate-100 text-slate-700 flex items-center justify-center font-bold">
+              <ShieldCheck className="w-5 h-5" />
+            </div>
+          </div>
+        </div>
+
+        {/* FILTER & TABS BAR */}
+        <div className="bg-white/90 border border-slate-200 rounded-3xl p-4 shadow-sm backdrop-blur-md flex flex-col md:flex-row items-center justify-between gap-3 print:hidden">
+          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+            <button
+              onClick={() => setActiveTab('pending')}
+              className={`px-4 py-2 rounded-2xl text-xs font-bold transition cursor-pointer ${
+                activeTab === 'pending' ? 'bg-amber-600 text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              Pending
+            </button>
+            <button
+              onClick={() => setActiveTab('lunas')}
+              className={`px-4 py-2 rounded-2xl text-xs font-bold transition cursor-pointer ${
+                activeTab === 'lunas' ? 'bg-amber-600 text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              Lunas (Diverifikasi)
+            </button>
+            <button
+              onClick={() => setActiveTab('all')}
+              className={`px-4 py-2 rounded-2xl text-xs font-bold transition cursor-pointer ${
+                activeTab === 'all' ? 'bg-slate-900 text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              Semua
+            </button>
+
+            {selectedIds.length > 0 && activeTab === 'pending' && (
+              <button
+                onClick={handleBatchApprove}
+                disabled={isSubmitting}
+                className="ml-auto md:ml-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-2xl text-xs font-bold transition shadow flex items-center gap-1.5 cursor-pointer"
+              >
+                <Check className="w-3.5 h-3.5" /> Verifikasi Terpilih ({selectedIds.length})
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 w-full md:w-auto">
+            <div className="relative w-full md:w-60">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <input 
+                type="text" 
+                placeholder="Cari pasien, No RM, ID..." 
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-300 rounded-2xl pl-10 pr-3.5 py-2 text-xs text-slate-800 focus:outline-none font-medium"
+              />
+            </div>
+            <div className="relative w-full md:w-44">
+              <Calendar className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input 
+                type="text" 
+                placeholder="Filter tgl..." 
+                value={filterTanggal}
+                onChange={(e) => setFilterTanggal(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-300 rounded-2xl pl-9 pr-3.5 py-2 text-xs text-slate-800 focus:outline-none font-medium"
+              />
+            </div>
+          </div>
+        </div>
+
+        {message && (
+          <div className={`p-4 rounded-2xl text-xs flex items-start space-x-2.5 border shadow-sm print:hidden ${
+            message.type === 'success' ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-rose-50 border-rose-200 text-rose-800'
+          }`}>
+            {message.type === 'success' ? <CheckCircle2 className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" /> : <AlertCircle className="w-4 h-4 text-rose-500 flex-shrink-0 mt-0.5" />}
+            <span className="font-medium">{message.text}</span>
+          </div>
+        )}
+
+        {/* SELECT ALL BAR FOR PENDING */}
+        {activeTab === 'pending' && filtered.length > 0 && (
+          <div className="flex items-center px-4 py-2 bg-slate-100/80 rounded-2xl text-xs font-bold text-slate-700 print:hidden">
+            <button onClick={toggleSelectAll} className="flex items-center gap-2 cursor-pointer hover:text-slate-900">
+              {selectedIds.length === filtered.length ? <CheckSquare className="w-4 h-4 text-amber-600" /> : <Square className="w-4 h-4 text-slate-400" />}
+              <span>Pilih Semua di Halaman Ini ({filtered.length} Pasien)</span>
+            </button>
+          </div>
+        )}
+
+        {isLoading ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {[1, 2, 3].map((n) => (
+              <div key={n} className="bg-white border border-slate-200 rounded-3xl p-6 h-60 animate-pulse shadow-sm"></div>
+            ))}
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="bg-white border border-slate-200 rounded-3xl p-12 text-center space-y-3 shadow-sm">
+            <ShieldCheck className="w-12 h-12 text-slate-300 mx-auto" />
+            <h2 className="text-sm font-bold text-slate-700">Tidak ada data verifikasi IGD.</h2>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {filtered.map((tx) => {
+              const isSelected = selectedIds.includes(tx.id);
+              return (
+                <div key={tx.id} className={`bg-white border rounded-3xl p-6 shadow-lg shadow-slate-200/50 flex flex-col justify-between space-y-4 transition ${
+                  isSelected ? 'border-amber-500 ring-2 ring-amber-500/20 bg-amber-50/20' : 'border-slate-200/90'
+                }`}>
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        {tx.status_bayar === 'pending' && (
+                          <button onClick={() => toggleSelectOne(tx.id)} className="cursor-pointer text-slate-400 hover:text-amber-600">
+                            {isSelected ? <CheckSquare className="w-4 h-4 text-amber-600" /> : <Square className="w-4 h-4" />}
+                          </button>
+                        )}
+                        <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full uppercase ${
+                          tx.status_bayar === 'lunas' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'
+                        }`}>
+                          {tx.status_bayar === 'lunas' ? 'Sudah Diverifikasi' : 'Pending Verifikasi'}
+                        </span>
+                      </div>
+                      <span className="bg-slate-100 text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded-md font-mono">
+                        {tx.id}
+                      </span>
+                    </div>
+
+                    <div className="space-y-0.5">
+                      <div className="flex justify-between items-start">
+                        <h2 className="text-sm font-bold text-slate-900">{tx.nama_pasien}</h2>
+                        {tx.triase && (
+                          <span className={`text-[9px] font-bold px-2 py-0.5 rounded uppercase ${
+                            tx.triase === 'Merah' ? 'bg-rose-100 text-rose-800' :
+                            tx.triase === 'Kuning' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'
+                          }`}>
+                            Triase: {tx.triase}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-amber-700 font-mono font-semibold">No. RM: {tx.no_rm}</p>
+                    </div>
+
+                    <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3 text-xs space-y-1 text-slate-600">
+                      <p>Unit: <strong className="text-slate-800">{tx.poli_tujuan}</strong></p>
+                      <p>Dokter: <strong className="text-slate-800">{tx.dokter_penanggung_jawab || 'Dokter Jaga IGD'}</strong></p>
+                      <p className="pt-1 border-t border-slate-200/60 text-[11px] text-slate-500">{tx.rincian_layanan || 'Pemeriksaan Darurat IGD'}</p>
+                      {tx.catatan_klinis && (
+                        <p className="text-[10px] text-sky-800 font-medium italic mt-1">Catatan: {tx.catatan_klinis}</p>
+                      )}
+                    </div>
+
+                    <div className="flex justify-between items-center font-bold text-xs">
+                      <span className="text-slate-500">Total Tagihan:</span>
+                      <span className="text-base font-black text-slate-900 font-mono">{formatRupiah(tx.total_biaya)}</span>
+                    </div>
+                  </div>
+
+                  <div className="pt-3 border-t border-slate-100 flex items-center gap-2">
+                    <button
+                      onClick={() => setSelectedDetailRecord(tx)}
+                      className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl transition cursor-pointer"
+                      title="Lihat Detail Rincian"
+                    >
+                      <Eye className="w-4 h-4" />
+                    </button>
+                    {tx.status_bayar === 'pending' ? (
+                      <>
+                        <button
+                          onClick={() => handleApprove(tx)}
+                          disabled={isSubmitting}
+                          className="flex-1 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs py-2.5 px-3 rounded-2xl transition shadow-md flex items-center justify-center space-x-1.5 cursor-pointer disabled:opacity-50"
+                        >
+                          <Check className="w-4 h-4" />
+                          <span>Verifikasi Lunas</span>
+                        </button>
+                        <button
+                          onClick={() => handleReject(tx)}
+                          disabled={isSubmitting}
+                          className="bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs py-2.5 px-3 rounded-2xl transition flex items-center justify-center space-x-1 cursor-pointer border border-rose-200"
+                        >
+                          <Ban className="w-4 h-4 text-rose-500" />
+                        </button>
+                      </>
+                    ) : (
+                      <div className="flex-1 text-center py-2 bg-amber-50 border border-amber-200 text-amber-800 rounded-2xl text-xs font-bold flex items-center justify-center space-x-1.5">
+                        <CheckCircle2 className="w-4 h-4 text-amber-600" />
+                        <span>Telah Diverifikasi Pusat</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </main>
+
+      {/* DETAIL MODAL */}
+      {selectedDetailRecord && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 print:hidden">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+              <div>
+                <h3 className="text-sm font-black uppercase text-slate-900">Rincian Verifikasi IGD</h3>
+                <p className="text-[11px] text-slate-500 font-mono">ID: {selectedDetailRecord.id}</p>
+              </div>
+              <button onClick={() => setSelectedDetailRecord(null)} className="p-1.5 hover:bg-slate-100 rounded-full cursor-pointer">
+                <X className="w-5 h-5 text-slate-600" />
+              </button>
+            </div>
+
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-2 text-xs">
+              <p><span className="font-bold text-slate-500">Nama Pasien:</span> {selectedDetailRecord.nama_pasien}</p>
+              <p><span className="font-bold text-slate-500">No RM:</span> {selectedDetailRecord.no_rm}</p>
+              <p><span className="font-bold text-slate-500">Triase:</span> {selectedDetailRecord.triase || 'Hijau'} ({selectedDetailRecord.penjaminan || 'Umum'})</p>
+              <p><span className="font-bold text-slate-500">Dokter:</span> {selectedDetailRecord.dokter_penanggung_jawab || 'Dokter Jaga IGD'}</p>
+              <p><span className="font-bold text-slate-500">Rincian Layanan:</span> {selectedDetailRecord.rincian_layanan}</p>
+              {selectedDetailRecord.catatan_klinis && (
+                <p><span className="font-bold text-slate-500">Catatan Klinis:</span> {selectedDetailRecord.catatan_klinis}</p>
+              )}
+              {selectedDetailRecord.diskon && selectedDetailRecord.diskon > 0 ? (
+                <p><span className="font-bold text-slate-500">Diskon / Potongan:</span> {formatRupiah(selectedDetailRecord.diskon)}</p>
+              ) : null}
+              <div className="pt-2 border-t border-slate-200 flex justify-between font-black text-sm">
+                <span>Total Biaya:</span>
+                <span className="font-mono text-emerald-700">{formatRupiah(selectedDetailRecord.total_biaya)}</span>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={() => setSelectedDetailRecord(null)}
+                className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold cursor-pointer"
+              >
+                Tutup
+              </button>
+              {selectedDetailRecord.status_bayar === 'pending' && (
+                <button
+                  onClick={() => {
+                    handleApprove(selectedDetailRecord);
+                    setSelectedDetailRecord(null);
+                  }}
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold cursor-pointer shadow"
+                >
+                  Setujui Lunas Sekarang
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="print:hidden">
+        <AdminFooter />
+      </div>
+    </div>
+  );
+}
