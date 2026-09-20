@@ -5,9 +5,20 @@ import { useRouter } from 'next/navigation';
 import { 
   ArrowLeft, LogOut, Wallet, ShieldCheck, User, Clock, 
   Activity, Wifi, WifiOff, Maximize, Minimize, ChevronDown, 
-  Building2, Shield, BadgeCheck, Calculator 
+  Building2, Shield, BadgeCheck, Calculator, Bell, Sparkles, CheckCircle2 
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+
+// Interface Notifikasi Supabase Realtime
+interface NotificationItem {
+  id: string;
+  title: string;
+  message: string;
+  role: string;
+  is_read: boolean;
+  link?: string;
+  created_at: string;
+}
 
 interface KasirHeaderProps {
   title?: string;
@@ -16,6 +27,7 @@ interface KasirHeaderProps {
   backUrl?: string;
   userName?: string;
   userAvatar?: string | null;
+  currentRole?: string; // Filter notifikasi ('kasir', 'admin', 'manajemen')
 }
 
 export default function KasirHeader({
@@ -24,7 +36,8 @@ export default function KasirHeader({
   showBackButton = false,
   backUrl = "/kasir",
   userName: propUserName,
-  userAvatar: propUserAvatar
+  userAvatar: propUserAvatar,
+  currentRole = 'kasir'
 }: KasirHeaderProps) {
   const router = useRouter();
   const [currentTime, setCurrentTime] = useState<string>('');
@@ -44,10 +57,60 @@ export default function KasirHeader({
   const [calcPaid, setCalcPaid] = useState<string>('');
   const calcRef = useRef<HTMLDivElement>(null);
 
+  // State untuk System Notifications (Supabase Realtime)
+  const [unreadCount, setUnreadCount] = useState<number>(0);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [showNotifDropdown, setShowNotifDropdown] = useState<boolean>(false);
+  const notifRef = useRef<HTMLDivElement>(null);
+
   // Hitung kembalian otomatis
   const numericTotal = parseFloat(calcTotal.replace(/[^0-9]/g, '')) || 0;
   const numericPaid = parseFloat(calcPaid.replace(/[^0-9]/g, '')) || 0;
   const changeAmount = numericPaid - numericTotal;
+
+  // Realtime Notifications Fetching & Listening via Supabase
+  useEffect(() => {
+    const fetchNotifications = async () => {
+      const { data, error } = await supabase
+        .from('notifications')
+        .select('*')
+        .or(`role.eq.${currentRole},role.eq.all`)
+        .order('created_at', { ascending: false })
+        .limit(10);
+
+      if (data && !error) {
+        setNotifications(data);
+        const unread = data.filter((n: NotificationItem) => !n.is_read).length;
+        setUnreadCount(unread);
+      }
+    };
+
+    fetchNotifications();
+
+    // Dengar perubahan baru secara Realtime
+    const channel = supabase
+      .channel('realtime-kasir-header-notifications')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'notifications',
+        },
+        (payload) => {
+          const newNotif = payload.new as NotificationItem;
+          if (newNotif.role === currentRole || newNotif.role === 'all') {
+            setNotifications((prev) => [newNotif, ...prev.slice(0, 9)]);
+            setUnreadCount((prev) => prev + 1);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [currentRole]);
 
   // Jam Real-time & Penentuan Shift Kerja Otomatis
   useEffect(() => {
@@ -80,10 +143,25 @@ export default function KasirHeader({
       if (calcRef.current && !calcRef.current.contains(event.target as Node)) {
         setShowCalculator(false);
       }
+      if (notifRef.current && !notifRef.current.contains(event.target as Node)) {
+        setShowNotifDropdown(false);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // Handler Tandai Semua Notifikasi Sudah Dibaca
+  const handleMarkAllAsRead = async () => {
+    setUnreadCount(0);
+    setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
+
+    await supabase
+      .from('notifications')
+      .update({ is_read: true })
+      .or(`role.eq.${currentRole},role.eq.all`)
+      .eq('is_read', false);
+  };
 
   // Handler Tombol Fullscreen
   const toggleFullscreen = () => {
@@ -228,6 +306,81 @@ export default function KasirHeader({
         {/* Bagian Kanan: Widget & Aksi Cepat */}
         <div className="flex items-center flex-wrap gap-2 justify-end w-full lg:w-auto">
           
+          {/* Lonceng Notifikasi Realtime Dropdown */}
+          <div className="relative" ref={notifRef}>
+            <button
+              onClick={() => {
+                setShowNotifDropdown(!showNotifDropdown);
+                if (!showNotifDropdown) {
+                  handleMarkAllAsRead();
+                }
+              }}
+              className="p-2 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 rounded-xl transition cursor-pointer shadow-sm relative flex items-center justify-center"
+              title="Notifikasi Realtime Kasir"
+            >
+              <Bell className="w-4 h-4 text-emerald-600" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-rose-600 text-[9px] font-bold text-white shadow">
+                  {unreadCount}
+                </span>
+              )}
+            </button>
+
+            {showNotifDropdown && (
+              <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-xl border border-slate-200 p-4 z-50 animate-in fade-in slide-in-from-top-2 duration-200">
+                <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-100">
+                  <div className="flex items-center space-x-1.5">
+                    <Sparkles className="w-4 h-4 text-emerald-600" />
+                    <h4 className="text-xs font-black uppercase text-slate-900 tracking-wider">Notifikasi Loket</h4>
+                  </div>
+                  {unreadCount > 0 && (
+                    <span className="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded-full">
+                      {unreadCount} Baru
+                    </span>
+                  )}
+                </div>
+
+                <div className="space-y-2 max-h-72 overflow-y-auto">
+                  {notifications.length === 0 ? (
+                    <div className="text-center py-4 text-xs text-slate-400 font-medium">
+                      Belum ada notifikasi baru untuk kasir
+                    </div>
+                  ) : (
+                    notifications.map((notif) => (
+                      <div
+                        key={notif.id}
+                        onClick={() => {
+                          if (notif.link) router.push(notif.link);
+                        }}
+                        className={`p-2.5 rounded-xl border text-xs transition cursor-pointer flex items-start space-x-2.5 ${
+                          !notif.is_read
+                            ? 'bg-emerald-50/70 border-emerald-200'
+                            : 'bg-slate-50 border-slate-100'
+                        }`}
+                      >
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
+                        <div>
+                          <p className="font-bold text-slate-800">{notif.title}</p>
+                          <p className="text-[11px] text-slate-600 mt-0.5">{notif.message}</p>
+                          <span className="text-[9px] text-slate-400 mt-1 block font-mono">
+                            {new Date(notif.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <button
+                  onClick={() => setShowNotifDropdown(false)}
+                  className="w-full mt-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition cursor-pointer shadow"
+                >
+                  Tutup Notifikasi
+                </button>
+              </div>
+            )}
+          </div>
+
           {/* Kalkulator Cepat Dropdown */}
           <div className="relative" ref={calcRef}>
             <button

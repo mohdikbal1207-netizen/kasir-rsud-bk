@@ -3,11 +3,28 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { createClient } from '@supabase/supabase-js';
 import { 
   ArrowLeft, ShieldCheck, Clock, UserCheck, Activity, Calendar, 
   Bell, Globe, CheckCircle2, AlertCircle, Wifi, WifiOff, Cpu, 
   Sparkles, ChevronDown, User, Shield, LogOut, Terminal, Timer, Search, Database, Home 
 } from 'lucide-react';
+
+// Inisialisasi Supabase Client
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+// Interface Notifikasi dari Database Supabase
+interface NotificationItem {
+  id: string;
+  title: string;
+  message: string;
+  role: string;
+  is_read: boolean;
+  link?: string;
+  created_at: string;
+}
 
 interface AdminHeaderProps {
   title: string;
@@ -16,6 +33,7 @@ interface AdminHeaderProps {
   showBackButton?: boolean;
   backUrl?: string;
   adminName?: string; // Nama admin aktif
+  currentRole?: string; // Role untuk filter notifikasi ('admin', 'kasir', 'manajemen')
 }
 
 export default function AdminHeader({
@@ -24,7 +42,8 @@ export default function AdminHeader({
   badgeText,
   showBackButton = false,
   backUrl = '/admin',
-  adminName = 'Admin Verifikator'
+  adminName = 'Admin Verifikator',
+  currentRole = 'admin'
 }: AdminHeaderProps) {
   const router = useRouter();
 
@@ -36,7 +55,8 @@ export default function AdminHeader({
   const [sessionSeconds, setSessionSeconds] = useState<number>(0);
   
   // State Interaktif Dropdown & Status
-  const [unreadCount, setUnreadCount] = useState<number>(1);
+  const [unreadCount, setUnreadCount] = useState<number>(0);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [showNotifDropdown, setShowNotifDropdown] = useState<boolean>(false);
   const [showProfileDropdown, setShowProfileDropdown] = useState<boolean>(false);
   const [showDiagnosticModal, setShowDiagnosticModal] = useState<boolean>(false);
@@ -47,6 +67,53 @@ export default function AdminHeader({
   const notifRef = useRef<HTMLDivElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
   const diagnosticRef = useRef<HTMLDivElement>(null);
+
+  // Synchronize Notifications with Supabase (Realtime)
+  useEffect(() => {
+    // 1. Fetch awal notifikasi dari Supabase
+    const fetchNotifications = async () => {
+      if (!supabaseUrl || !supabaseAnonKey) return;
+
+      const { data, error } = await supabase
+        .from('notifications')
+        .select('*')
+        .or(`role.eq.${currentRole},role.eq.all`)
+        .order('created_at', { ascending: false })
+        .limit(10);
+
+      if (data && !error) {
+        setNotifications(data);
+        const unread = data.filter((n: NotificationItem) => !n.is_read).length;
+        setUnreadCount(unread);
+      }
+    };
+
+    fetchNotifications();
+
+    // 2. Listener Realtime Subscriptions Supabase
+    const channel = supabase
+      .channel('realtime-admin-header-notifications')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'notifications',
+        },
+        (payload) => {
+          const newNotif = payload.new as NotificationItem;
+          if (newNotif.role === currentRole || newNotif.role === 'all') {
+            setNotifications((prev) => [newNotif, ...prev.slice(0, 9)]);
+            setUnreadCount((prev) => prev + 1);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [currentRole]);
 
   useEffect(() => {
     // Deteksi Jaringan Online/Offline
@@ -94,6 +161,20 @@ export default function AdminHeader({
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, []);
+
+  // Handler Tandai Semua Notifikasi Sudah Dibaca
+  const handleMarkAllAsRead = async () => {
+    setUnreadCount(0);
+    setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
+
+    if (supabaseUrl && supabaseAnonKey) {
+      await supabase
+        .from('notifications')
+        .update({ is_read: true })
+        .or(`role.eq.${currentRole},role.eq.all`)
+        .eq('is_read', false);
+    }
+  };
 
   // Format detik sesi menjadi HH:MM:SS
   const formatSessionTime = (totalSecs: number) => {
@@ -259,7 +340,9 @@ export default function AdminHeader({
               <button 
                 onClick={() => {
                   setShowNotifDropdown(!showNotifDropdown);
-                  setUnreadCount(0);
+                  if (!showNotifDropdown) {
+                    handleMarkAllAsRead();
+                  }
                 }}
                 className="relative p-1.5 rounded-xl hover:bg-slate-700 text-slate-300 transition cursor-pointer flex items-center justify-center"
                 title="Pemberitahuan Antrean Sistem"
@@ -277,17 +360,45 @@ export default function AdminHeader({
                       <Sparkles className="w-4 h-4 text-emerald-600" />
                       <h4 className="text-xs font-black uppercase text-slate-900 tracking-wider">Pemberitahuan Sistem</h4>
                     </div>
-                    <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full">Baru</span>
+                    {unreadCount > 0 && (
+                      <span className="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded-full">
+                        {unreadCount} Baru
+                      </span>
+                    )}
                   </div>
-                  <div className="py-3 space-y-2.5">
-                    <div className="flex items-start space-x-2.5 text-xs bg-slate-50 p-2.5 rounded-xl border border-slate-100 shadow-sm">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
-                      <div>
-                        <p className="font-bold text-slate-800">Tagihan Ranap Baru Diinput</p>
-                        <p className="text-[10px] text-slate-500 mt-0.5">Petugas kasir telah mengirimkan rekapitulasi baru yang siap untuk diverifikasi admin.</p>
+
+                  {/* List Notifikasi Realtime */}
+                  <div className="py-3 space-y-2.5 max-h-72 overflow-y-auto">
+                    {notifications.length === 0 ? (
+                      <div className="text-center py-4 text-xs text-slate-400">
+                        Belum ada pemberitahuan baru
                       </div>
-                    </div>
+                    ) : (
+                      notifications.map((notif) => (
+                        <div 
+                          key={notif.id} 
+                          onClick={() => {
+                            if (notif.link) router.push(notif.link);
+                          }}
+                          className={`flex items-start space-x-2.5 text-xs p-2.5 rounded-xl border transition cursor-pointer ${
+                            !notif.is_read 
+                              ? 'bg-emerald-50/60 border-emerald-200/80' 
+                              : 'bg-slate-50 border-slate-100'
+                          }`}
+                        >
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
+                          <div>
+                            <p className="font-bold text-slate-800">{notif.title}</p>
+                            <p className="text-[10px] text-slate-500 mt-0.5">{notif.message}</p>
+                            <span className="text-[9px] text-slate-400 mt-1 block">
+                              {new Date(notif.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                        </div>
+                      ))
+                    )}
                   </div>
+
                   <button 
                     onClick={() => setShowNotifDropdown(false)}
                     className="w-full mt-1 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition cursor-pointer shadow"
