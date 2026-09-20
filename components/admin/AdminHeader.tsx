@@ -10,6 +10,9 @@ import {
   Sparkles, ChevronDown, User, Shield, LogOut, Terminal, Timer, Search, Database, Home 
 } from 'lucide-react';
 
+// Import komponen NotificationBell dari folder parent components
+import NotificationBell from '../NotificationBell';
+
 // Inisialisasi Supabase Client
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -34,6 +37,7 @@ interface AdminHeaderProps {
   backUrl?: string;
   adminName?: string; // Nama admin aktif
   currentRole?: string; // Role untuk filter notifikasi ('admin', 'kasir', 'manajemen')
+  useExternalBell?: boolean; // Opsional: Set true jika ingin menggunakan komponen NotificationBell terpisah
 }
 
 export default function AdminHeader({
@@ -43,7 +47,8 @@ export default function AdminHeader({
   showBackButton = false,
   backUrl = '/admin',
   adminName = 'Admin Verifikator',
-  currentRole = 'admin'
+  currentRole = 'admin',
+  useExternalBell = true
 }: AdminHeaderProps) {
   const router = useRouter();
 
@@ -92,7 +97,7 @@ export default function AdminHeader({
 
     // 2. Listener Realtime Subscriptions Supabase
     const channel = supabase
-      .channel('realtime-admin-header-notifications')
+      .channel(`realtime-admin-header-notifications-${currentRole}`)
       .on(
         'postgres_changes',
         {
@@ -335,79 +340,82 @@ export default function AdminHeader({
               )}
             </div>
             
-            {/* Tombol Notifikasi Dropdown */}
-            <div className="relative" ref={notifRef}>
-              <button 
-                onClick={() => {
-                  setShowNotifDropdown(!showNotifDropdown);
-                  if (!showNotifDropdown) {
-                    handleMarkAllAsRead();
-                  }
-                }}
-                className="relative p-1.5 rounded-xl hover:bg-slate-700 text-slate-300 transition cursor-pointer flex items-center justify-center"
-                title="Pemberitahuan Antrean Sistem"
-              >
-                <Bell className="w-3.5 h-3.5" />
-                {unreadCount > 0 && (
-                  <span className="absolute top-1 right-1 w-2 h-2 bg-amber-500 rounded-full animate-pulse"></span>
-                )}
-              </button>
+            {/* Lonceng Notifikasi: Gunakan NotificationBell jika useExternalBell = true, jika false gunakan dropdown bawaan */}
+            {useExternalBell ? (
+              <NotificationBell currentRole={currentRole} />
+            ) : (
+              <div className="relative" ref={notifRef}>
+                <button 
+                  onClick={() => {
+                    setShowNotifDropdown(!showNotifDropdown);
+                    if (!showNotifDropdown) {
+                      handleMarkAllAsRead();
+                    }
+                  }}
+                  className="relative p-1.5 rounded-xl hover:bg-slate-700 text-slate-300 transition cursor-pointer flex items-center justify-center"
+                  title="Pemberitahuan Antrean Sistem"
+                >
+                  <Bell className="w-3.5 h-3.5" />
+                  {unreadCount > 0 && (
+                    <span className="absolute top-1 right-1 w-2 h-2 bg-amber-500 rounded-full animate-pulse"></span>
+                  )}
+                </button>
 
-              {showNotifDropdown && (
-                <div className="absolute right-0 mt-3 w-80 bg-white rounded-2xl shadow-2xl border border-slate-200 text-slate-800 p-4 z-50 animate-fade-in font-sans">
-                  <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                    <div className="flex items-center space-x-1.5">
-                      <Sparkles className="w-4 h-4 text-emerald-600" />
-                      <h4 className="text-xs font-black uppercase text-slate-900 tracking-wider">Pemberitahuan Sistem</h4>
-                    </div>
-                    {unreadCount > 0 && (
-                      <span className="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded-full">
-                        {unreadCount} Baru
-                      </span>
-                    )}
-                  </div>
-
-                  {/* List Notifikasi Realtime */}
-                  <div className="py-3 space-y-2.5 max-h-72 overflow-y-auto">
-                    {notifications.length === 0 ? (
-                      <div className="text-center py-4 text-xs text-slate-400">
-                        Belum ada pemberitahuan baru
+                {showNotifDropdown && (
+                  <div className="absolute right-0 mt-3 w-80 bg-white rounded-2xl shadow-2xl border border-slate-200 text-slate-800 p-4 z-50 animate-fade-in font-sans">
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                      <div className="flex items-center space-x-1.5">
+                        <Sparkles className="w-4 h-4 text-emerald-600" />
+                        <h4 className="text-xs font-black uppercase text-slate-900 tracking-wider">Pemberitahuan Sistem</h4>
                       </div>
-                    ) : (
-                      notifications.map((notif) => (
-                        <div 
-                          key={notif.id} 
-                          onClick={() => {
-                            if (notif.link) router.push(notif.link);
-                          }}
-                          className={`flex items-start space-x-2.5 text-xs p-2.5 rounded-xl border transition cursor-pointer ${
-                            !notif.is_read 
-                              ? 'bg-emerald-50/60 border-emerald-200/80' 
-                              : 'bg-slate-50 border-slate-100'
-                          }`}
-                        >
-                          <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
-                          <div>
-                            <p className="font-bold text-slate-800">{notif.title}</p>
-                            <p className="text-[10px] text-slate-500 mt-0.5">{notif.message}</p>
-                            <span className="text-[9px] text-slate-400 mt-1 block">
-                              {new Date(notif.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
-                            </span>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
+                      {unreadCount > 0 && (
+                        <span className="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded-full">
+                          {unreadCount} Baru
+                        </span>
+                      )}
+                    </div>
 
-                  <button 
-                    onClick={() => setShowNotifDropdown(false)}
-                    className="w-full mt-1 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition cursor-pointer shadow"
-                  >
-                    Tutup Panel
-                  </button>
-                </div>
-              )}
-            </div>
+                    <div className="py-3 space-y-2.5 max-h-72 overflow-y-auto">
+                      {notifications.length === 0 ? (
+                        <div className="text-center py-4 text-xs text-slate-400">
+                          Belum ada pemberitahuan baru
+                        </div>
+                      ) : (
+                        notifications.map((notif) => (
+                          <div 
+                            key={notif.id} 
+                            onClick={() => {
+                              if (notif.link) router.push(notif.link);
+                            }}
+                            className={`flex items-start space-x-2.5 text-xs p-2.5 rounded-xl border transition cursor-pointer ${
+                              !notif.is_read 
+                                ? 'bg-emerald-50/60 border-emerald-200/80' 
+                                : 'bg-slate-50 border-slate-100'
+                            }`}
+                          >
+                            <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
+                            <div>
+                              <p className="font-bold text-slate-800">{notif.title}</p>
+                              <p className="text-[10px] text-slate-500 mt-0.5">{notif.message}</p>
+                              <span className="text-[9px] text-slate-400 mt-1 block">
+                                {new Date(notif.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+
+                    <button 
+                      onClick={() => setShowNotifDropdown(false)}
+                      className="w-full mt-1 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition cursor-pointer shadow"
+                    >
+                      Tutup Panel
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
 
           </div>
         </div>

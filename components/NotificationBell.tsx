@@ -356,12 +356,24 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
   };
 
   // 10. FITUR BARU: Toggle Pin/Unpin Notifikasi
-  const handleTogglePin = (e: React.MouseEvent, id: string) => {
-    e.stopPropagation();
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === id ? { ...n, is_pinned: !n.is_pinned } : n))
-    );
-  };
+  const handleTogglePin = async (e: React.MouseEvent, id: string) => {
+  e.stopPropagation();
+  const target = notifications.find(n => n.id === id);
+  if (!target) return;
+  
+  const newPinnedState = !target.is_pinned;
+  
+  // Update State Lokal
+  setNotifications((prev) =>
+    prev.map((n) => (n.id === id ? { ...n, is_pinned: newPinnedState } : n))
+  );
+
+  // Rekomendasi: Sync juga ke database Supabase
+  await supabase
+    .from("notifications")
+    .update({ is_pinned: newPinnedState })
+    .eq("id", id);
+};
 
   // 11. FITUR BARU: Batch Selection Handler
   const toggleSelectItem = (id: string) => {
