@@ -39,7 +39,8 @@ import {
   Calendar,
   Zap,
   Check,
-  AlertTriangle
+  AlertTriangle,
+  Loader2
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import KasirHeader from '@/components/kasir/KasirHeader';
@@ -267,7 +268,6 @@ export default function KasirAbsensiPage() {
         .eq('is_active', true);
 
       if (settingData && settingData.length > 0) {
-        // Cari yang cocok dengan hari ini atau ambil yang pertama aktif
         const matched = settingData.find(s => s.hari.toLowerCase().includes(currentDayName.toLowerCase()) || s.hari === 'Setiap Hari') || settingData[0];
         setActiveSetting(matched);
         setShift(matched.nama_shift || 'Pagi');
@@ -329,6 +329,7 @@ export default function KasirAbsensiPage() {
     return R * c;
   };
 
+  // PERBAIKAN 1: PENANGANAN GEOLOCATION DENGAN TIMEOUT & AKURASI KOMPUTER/LAPTOP
   const checkGPSLocation = () => {
     setIsLocating(true);
     setLocationStatus('Mendeteksi koordinat GPS perangkat...');
@@ -363,29 +364,48 @@ export default function KasirAbsensiPage() {
       },
       (error) => {
         setIsLocating(false);
-        setLocationStatus('Gagal mendeteksi GPS. Pastikan izin lokasi perangkat diaktifkan.');
-        addLog('Gagal mendeteksi koordinat GPS.');
+        let errorMsg = 'Gagal mendeteksi GPS. Pastikan izin lokasi perangkat diaktifkan.';
+        if (error.code === error.PERMISSION_DENIED) errorMsg = 'Izin lokasi ditolak browser. Izinkan akses GPS pada alamat URL ini.';
+        else if (error.code === error.TIMEOUT) errorMsg = 'Sinyal GPS lemah / Waktu deteksi habis. Coba klik tombol segarkan.';
+        
+        setLocationStatus(errorMsg);
+        addLog(`Gagal mendeteksi GPS: ${error.message}`);
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
     );
   };
 
+  // PERBAIKAN 2: MEMATIKAN STREAM KAMERA SECARA BERSIH
+  const stopCameraStream = () => {
+    if (videoRef.current && videoRef.current.srcObject) {
+      const stream = videoRef.current.srcObject as MediaStream;
+      stream.getTracks().forEach(track => track.stop());
+      videoRef.current.srcObject = null;
+    }
+    setCameraActive(false);
+  };
+
   const startCamera = async () => {
+    stopCameraStream();
     setCapturedImage(null);
     setCameraActive(true);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' }, 
+        audio: false 
+      });
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
       }
       addLog('Kamera depan berhasil diaktifkan.');
     } catch (err) {
-      showToast('Tidak dapat mengakses kamera depan.', 'error');
+      showToast('Tidak dapat mengakses kamera depan. Pastikan izin kamera aktif.', 'error');
       setCameraActive(false);
       addLog('Gagal mengakses kamera.');
     }
   };
 
+  // PERBAIKAN 3: MEMASIKAN FOTO HASIL SNAPSHOT SESUAI DENGAN CERMIN LIVE PREVIEW
   const capturePhoto = () => {
     if (videoRef.current) {
       const video = videoRef.current;
@@ -394,15 +414,13 @@ export default function KasirAbsensiPage() {
       canvas.height = video.videoHeight || 480;
       const ctx = canvas.getContext('2d');
       if (ctx) {
+        ctx.translate(canvas.width, 0);
+        ctx.scale(-1, 1);
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
         setCapturedImage(dataUrl);
 
-        const stream = video.srcObject as MediaStream;
-        if (stream) {
-          stream.getTracks().forEach(track => track.stop());
-        }
-        setCameraActive(false);
+        stopCameraStream();
         showToast('Foto live selfie berhasil diambil!', 'success');
         addLog('Live selfie berhasil ditangkap.');
       }
@@ -415,8 +433,15 @@ export default function KasirAbsensiPage() {
     setDistance(null);
     setGpsAccuracy(null);
     checkGPSLocation();
-    startCamera();
+    setTimeout(() => {
+      startCamera();
+    }, 300);
     addLog('Membuka form smart absensi akun Anda.');
+  };
+
+  const handleCloseForm = () => {
+    stopCameraStream();
+    setShowFormModal(false);
   };
 
   // Simpan Absensi Sesuai Struktur Tabel SQL Supabase
@@ -467,7 +492,7 @@ export default function KasirAbsensiPage() {
 
       showToast('Absensi berhasil dikirim dan menunggu verifikasi Admin!', 'success');
       addLog(`Mengirim absensi untuk ${namaPegawai} (${shift})`);
-      setShowFormModal(false);
+      handleCloseForm();
       setKeterangan('');
       setCapturedImage(null);
       fetchRecords(currentUser.id);
@@ -851,10 +876,10 @@ export default function KasirAbsensiPage() {
               <h3 className="text-sm font-black uppercase text-slate-900 flex items-center gap-2">
                 <Camera className="w-5 h-5 text-sky-600" /> Form Smart Absensi Akun Anda
               </h3>
-              <button onClick={() => setShowFormModal(false)} className="p-1.5 hover:bg-slate-100 rounded-full cursor-pointer"><X className="w-5 h-5 text-slate-500" /></button>
+              <button onClick={handleCloseForm} className="p-1.5 hover:bg-slate-100 rounded-full cursor-pointer"><X className="w-5 h-5 text-slate-500" /></button>
             </div>
 
-            {/* FITUR PENAMBAHAN BARU: PERINGATAN BILA SHIFT DITUTUP */}
+            {/* PERINGATAN BILA SHIFT DITUTUP */}
             {!isShiftOpen && (
               <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-2xl flex items-center gap-3 text-xs text-amber-900 font-medium">
                 <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
@@ -880,9 +905,16 @@ export default function KasirAbsensiPage() {
                       </div>
                     </>
                   ) : (
-                    <div className="text-slate-400 text-center p-4">
-                      <Camera className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                      <span>Kamera belum aktif</span>
+                    <div className="text-slate-400 text-center p-4 space-y-2">
+                      <Camera className="w-8 h-8 mx-auto opacity-50" />
+                      <span className="block text-xs">Kamera belum aktif / terputus</span>
+                      <button
+                        type="button"
+                        onClick={startCamera}
+                        className="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white rounded-xl text-xs font-bold transition shadow"
+                      >
+                        Nyalakan Kamera
+                      </button>
                     </div>
                   )}
                 </div>
@@ -988,7 +1020,7 @@ export default function KasirAbsensiPage() {
               </div>
 
               <div className="flex justify-end gap-2 pt-3 border-t">
-                <button type="button" onClick={() => { setShowFormModal(false); if (videoRef.current?.srcObject) { (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop()); } }} className="px-5 py-2.5 bg-slate-200 text-slate-700 rounded-xl font-bold cursor-pointer">Batal</button>
+                <button type="button" onClick={handleCloseForm} className="px-5 py-2.5 bg-slate-200 text-slate-700 rounded-xl font-bold cursor-pointer">Batal</button>
                 <button 
                   type="submit" 
                   disabled={!capturedImage || distance === null || distance > officeLocation.radius_meter}
