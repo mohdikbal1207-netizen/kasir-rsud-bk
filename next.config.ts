@@ -25,7 +25,8 @@ const nextConfig: NextConfig = {
           },
           {
             key: 'Permissions-Policy',
-            value: 'camera=(), microphone=(), geolocation=()', // Membatasi akses perangkat keras
+            // DIPERBAIKI: Mengizinkan kamera dan GPS untuk origin aplikasi sendiri (self)
+            value: 'camera=(self), microphone=(), geolocation=(self)',
           },
           {
             key: 'Content-Security-Policy',
