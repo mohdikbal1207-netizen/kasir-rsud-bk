@@ -3,7 +3,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Printer, Save, Calculator, Stethoscope, Search, UserCheck, 
-  History, FileText, Eye, AlertCircle, RefreshCw, ArrowLeft, X, FileSpreadsheet, Calendar, User, Banknote, Zap, CheckCircle2, ShieldCheck, Info, Download, Upload, Plus, Minus, Trash2, Copy, Receipt, CheckCircle
+  History, FileText, Eye, AlertCircle, RefreshCw, ArrowLeft, X, FileSpreadsheet, Calendar, User, Banknote, Zap, CheckCircle2, ShieldCheck, Info, Download, Upload, Plus, Minus, Trash2, Copy, Receipt, CheckCircle, CheckSquare, Square, Layers
 } from 'lucide-react';
 import KasirHeader from '@/components/kasir/KasirHeader';
 import KasirFooter from '@/components/kasir/KasirFooter';
@@ -31,6 +31,8 @@ interface TagihanRecord {
   metodeBayar: 'Tunai / Cash' | 'Online / QRIS';
   statusBayar: 'Lunas' | 'Belum Bayar';
   penjaminan: 'Umum' | 'BPJS';
+  kasirNama?: string;
+  kasirNip?: string;
 }
 
 const daftarTindakanIGD: ItemTindakan[] = [
@@ -117,6 +119,10 @@ export default function FormKasirIGD() {
   const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [showThermalModal, setShowThermalModal] = useState(false);
   const [showShiftRecapPrint, setShowShiftRecapPrint] = useState(false);
+  const [showBatchPrint, setShowBatchPrint] = useState(false);
+  const [singlePrintRecord, setSinglePrintRecord] = useState<TagihanRecord | null>(null);
+  const [selectedCardIds, setSelectedCardIds] = useState<string[]>([]);
+
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'info' | 'error' } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -195,6 +201,8 @@ export default function FormKasirIGD() {
             metodeBayar: h.metode_bayar || 'Tunai / Cash',
             statusBayar: h.status_bayar || 'Lunas',
             penjaminan: h.penjaminan || 'Umum',
+            kasirNama: h.kasir_nama || activeCashier.nama,
+            kasirNip: h.kasir_nip || activeCashier.id,
           };
         });
 
@@ -206,7 +214,6 @@ export default function FormKasirIGD() {
       console.warn('Gagal ambil dari Supabase, memuat dari localStorage:', err);
     }
 
-    // Fallback LocalStorage jika Supabase belum terisi/offline
     const saved = localStorage.getItem('rsud_igd_riwayat');
     if (saved) {
       try {
@@ -221,7 +228,7 @@ export default function FormKasirIGD() {
     fetchRiwayatTagihan();
   }, []);
 
-  // Keyboard Shortcuts Handler (Ctrl+S untuk Simpan, Ctrl+P untuk Cetak)
+  // Keyboard Shortcuts Handler
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
@@ -256,7 +263,6 @@ export default function FormKasirIGD() {
     );
   }, [formData.noRm, riwayatTagihan]);
 
-  // Autocomplete suggestions for patient search in form
   const patientSuggestions = useMemo(() => {
     if (!formData.noRm.trim() && !formData.nama.trim()) return [];
     const q = (formData.noRm || formData.nama).toLowerCase();
@@ -379,17 +385,69 @@ export default function FormKasirIGD() {
     return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(angka);
   };
 
+  // Cetak Formulir Form Input Saat Ini
   const handlePrint = () => {
-    window.print();
+    setSinglePrintRecord(null);
+    setShowShiftRecapPrint(false);
+    setShowBatchPrint(false);
+    setTimeout(() => {
+      window.print();
+    }, 100);
   };
 
+  // Cetak Kartu Pasien Spesifik (A4)
+  const handlePrintSingleRecord = (record: TagihanRecord) => {
+    setSinglePrintRecord(record);
+    setShowShiftRecapPrint(false);
+    setShowBatchPrint(false);
+    setTimeout(() => {
+      window.print();
+    }, 200);
+  };
+
+  // Cetak Rekap Shift
   const handlePrintShiftRecap = () => {
+    setSinglePrintRecord(null);
+    setShowBatchPrint(false);
     setShowShiftRecapPrint(true);
     setTimeout(() => {
       window.print();
       setShowShiftRecapPrint(false);
     }, 200);
   };
+
+  // Cetak Rekap Pasien Terpilih (Batch Print)
+  const handlePrintBatchSelected = () => {
+    if (selectedCardIds.length === 0) {
+      showToast('Pilih minimal 1 pasien terlebih dahulu!', 'error');
+      return;
+    }
+    setSinglePrintRecord(null);
+    setShowShiftRecapPrint(false);
+    setShowBatchPrint(true);
+    setTimeout(() => {
+      window.print();
+      setShowBatchPrint(false);
+    }, 200);
+  };
+
+  const toggleSelectCard = (id: string) => {
+    setSelectedCardIds(prev => 
+      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAllCards = () => {
+    if (selectedCardIds.length === filteredRiwayat.length) {
+      setSelectedCardIds([]);
+    } else {
+      setSelectedCardIds(filteredRiwayat.map(item => item.id));
+    }
+  };
+
+  const selectedBatchRecords = useMemo(() => {
+    return riwayatTagihan.filter(item => selectedCardIds.includes(item.id));
+  }, [riwayatTagihan, selectedCardIds]);
 
   const handleDownloadBackup = () => {
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(riwayatTagihan, null, 2));
@@ -423,7 +481,6 @@ export default function FormKasirIGD() {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  // SIMPAN KE SUPABASE & LOCALSTORAGE SECARA BERSAMAAN
   const handleSaveAndSend = async () => {
     if (!formData.nama || !formData.noRm) {
       showToast('Mohon lengkapi Nama Pasien dan Nomor Rekam Medis (No RM) terlebih dahulu!', 'error');
@@ -437,7 +494,6 @@ export default function FormKasirIGD() {
     setIsSubmitting(true);
 
     try {
-      // 1. Simpan Header ke Supabase
       const headerPayload = {
         no_rm: formData.noRm,
         nama_pasien: formData.nama,
@@ -465,7 +521,6 @@ export default function FormKasirIGD() {
 
       const headerId = headerResult.id;
 
-      // 2. Simpan Detail Item ke Supabase
       const detailPayload = Object.entries(selectedItems).map(([tindakanId, qty]) => {
         const itemInfo = daftarTindakanIGD.find(t => t.id === tindakanId);
         const tarifSatuan = itemInfo ? itemInfo.tarif : 0;
@@ -484,7 +539,6 @@ export default function FormKasirIGD() {
 
       if (detailError) throw detailError;
 
-      // 3. Simpan ke LocalStorage sebagai cadangan lokal
       const newRecord: TagihanRecord = {
         id: `IGD-${headerId}`,
         noRm: formData.noRm,
@@ -500,6 +554,8 @@ export default function FormKasirIGD() {
         metodeBayar: formData.metodeBayar,
         statusBayar: 'Lunas',
         penjaminan: formData.penjaminan,
+        kasirNama: activeCashier.nama,
+        kasirNip: activeCashier.id,
       };
 
       const updatedList = [newRecord, ...riwayatTagihan];
@@ -507,7 +563,6 @@ export default function FormKasirIGD() {
 
       showToast(`Data rincian biaya IGD untuk pasien ${formData.nama} BERHASIL disimpan ke Supabase!`, 'success');
 
-      // Refresh riwayat dari Supabase
       await fetchRiwayatTagihan();
 
       setFormData({
@@ -539,7 +594,6 @@ export default function FormKasirIGD() {
       return;
     }
 
-    // 1. Buat Header Kolom CSV
     const headers = [
       'ID Transaksi',
       'No RM',
@@ -554,7 +608,6 @@ export default function FormKasirIGD() {
       'Status Bayar'
     ];
 
-    // 2. Baris Data Transaksi
     const rows = filteredRiwayat.map((item) => [
       item.id,
       `"${item.noRm || ''}"`,
@@ -569,12 +622,10 @@ export default function FormKasirIGD() {
       item.statusBayar || 'Lunas'
     ]);
 
-    // 3. Gabungkan Header & Data dengan Format CSV (UTF-8 BOM agar rapi di Excel)
     const csvContent =
       '\uFEFF' +
       [headers.join(','), ...rows.map((row) => row.join(','))].join('\n');
 
-    // 4. Trigger Download File CSV
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -597,6 +648,21 @@ export default function FormKasirIGD() {
     const text = `RSUD BUKIT KERMAN - KASIR IGD\nPasien: ${formData.nama || '-'}\nNo RM: ${formData.noRm || '-'}\nTriase: ${formData.triase}\nTotal: ${formatRupiah(totalTarif)}\nKasir: ${activeCashier.nama}`;
     navigator.clipboard.writeText(text);
     showToast('Ringkasan tagihan disalin ke clipboard!', 'success');
+  };
+
+  // Aktifkan cetak untuk data yang sedang aktif (Entah single record atau form input)
+  const activePrintTarget = singlePrintRecord || {
+    noRm: formData.noRm,
+    namaPasien: formData.nama,
+    ttl: formData.ttl,
+    alamat: formData.alamat,
+    tanggal: formData.tanggal,
+    dokter: formData.dokter || 'Dokter Jaga IGD',
+    triase: formData.triase,
+    penjaminan: formData.penjaminan,
+    items: selectedItems,
+    totalTarif: totalTarif,
+    kasirNama: activeCashier.nama
   };
 
   return (
@@ -663,7 +729,7 @@ export default function FormKasirIGD() {
                 }`}
               >
                 <History className="w-4 h-4" />
-                <span>Daftar Riwayat &amp; Akumulasi Tagihan ({riwayatTagihan.length})</span>
+                <span>Daftar Riwayat &amp; Kartu Tagihan ({riwayatTagihan.length})</span>
               </button>
             </div>
             
@@ -1051,7 +1117,6 @@ export default function FormKasirIGD() {
                         />
                       </div>
 
-                      {/* QUICK EXACT CASH BUTTON */}
                       <div className="flex items-center gap-2 mt-2">
                         <span className="text-[10px] text-emerald-200 font-bold">Pintasan Uang Pas:</span>
                         <button
@@ -1175,7 +1240,7 @@ export default function FormKasirIGD() {
             </div>
           )}
 
-          {/* TAB 2: DAFTAR RIWAYAT & AKUMULASI TAGIHAN */}
+          {/* TAB 2: DAFTAR RIWAYAT & KARTU TAGIHAN (UPDATED: MODEL KARTU GRID) */}
           {activeTab === 'riwayat' && (
             <div className="space-y-6">
               
@@ -1220,12 +1285,32 @@ export default function FormKasirIGD() {
                 </div>
               </div>
 
-              {/* PANEL FILTER & KONTROL TABEL */}
+              {/* PANEL FILTER & KONTROL MASAL */}
               <div className="bg-white text-slate-800 shadow-2xl rounded-3xl p-6 sm:p-8 border border-slate-200 space-y-6">
                 
                 <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 border-b border-slate-200 pb-4">
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs font-bold text-slate-600">Menampilkan seluruh data riwayat transaksi kasir IGD.</span>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button
+                      onClick={toggleSelectAllCards}
+                      className="flex items-center gap-2 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition cursor-pointer border border-slate-300"
+                    >
+                      {selectedCardIds.length === filteredRiwayat.length && filteredRiwayat.length > 0 ? (
+                        <CheckSquare className="w-4 h-4 text-emerald-600" />
+                      ) : (
+                        <Square className="w-4 h-4 text-slate-400" />
+                      )}
+                      <span>Pilih Semua ({selectedCardIds.length}/{filteredRiwayat.length})</span>
+                    </button>
+
+                    {selectedCardIds.length > 0 && (
+                      <button
+                        onClick={handlePrintBatchSelected}
+                        className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition shadow cursor-pointer animate-pulse"
+                      >
+                        <Printer className="w-4 h-4" />
+                        <span>Cetak Rekap Pasien Terpilih ({selectedCardIds.length})</span>
+                      </button>
+                    )}
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
@@ -1330,75 +1415,139 @@ export default function FormKasirIGD() {
                   </div>
                 </div>
 
-                {/* TABEL RIWAYAT */}
-                <div className="overflow-x-auto border border-slate-200 rounded-2xl shadow-sm">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead className="bg-slate-900 text-white uppercase text-[10px]">
-                      <tr>
-                        <th className="p-3 w-12 text-center">No</th>
-                        <th className="p-3">ID Transaksi</th>
-                        <th className="p-3">No RM / Nama Pasien</th>
-                        <th className="p-3">Tanggal</th>
-                        <th className="p-3">Triase / Penjaminan</th>
-                        <th className="p-3 text-right">Total Tarif</th>
-                        <th className="p-3 text-center">Status Admin</th>
-                        <th className="p-3 text-center">Aksi</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {filteredRiwayat.length > 0 ? (
-                        filteredRiwayat.map((item, index) => (
-                          <tr key={item.id} className="hover:bg-slate-50 transition">
-                            <td className="p-3 text-center font-bold text-slate-500">{index + 1}</td>
-                            <td className="p-3 font-mono font-bold text-sky-700">{item.id}</td>
-                            <td className="p-3">
-                              <p className="font-bold text-slate-900">{item.namaPasien}</p>
-                              <p className="text-[10px] text-slate-500 font-mono font-bold">RM: {item.noRm}</p>
-                            </td>
-                            <td className="p-3 text-slate-600">{item.tanggal}</td>
-                            <td className="p-3">
-                              <p className="font-semibold text-slate-700">{item.metodeBayar}</p>
-                              <span className={`inline-block mt-0.5 px-2 py-0.5 text-[9px] font-bold rounded uppercase ${
-                                item.triase === 'Merah' ? 'bg-rose-100 text-rose-800' :
-                                item.triase === 'Kuning' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'
-                              }`}>
-                                Triase: {item.triase || 'Hijau'} ({item.penjaminan || 'Umum'})
-                              </span>
-                            </td>
-                            <td className="p-3 text-right font-black text-emerald-700">{formatRupiah(item.totalTarif)}</td>
-                            <td className="p-3 text-center">
-                              <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase ${
+                {/* DAFTAR RIWAYAT - TAMPILAN KARTU GRID (CARD VIEW MODEL) */}
+                {filteredRiwayat.length > 0 ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                    {filteredRiwayat.map((item) => {
+                      const isSelected = selectedCardIds.includes(item.id);
+                      const totalQty = Object.values(item.items).reduce((a, b) => a + b, 0);
+
+                      return (
+                        <div 
+                          key={item.id} 
+                          className={`relative bg-white rounded-3xl border transition-all duration-200 p-5 shadow-sm hover:shadow-xl flex flex-col justify-between ${
+                            isSelected ? 'border-indigo-500 ring-2 ring-indigo-500/20 bg-indigo-50/10' : 'border-slate-200 hover:border-slate-300'
+                          }`}
+                        >
+                          {/* HEADER KARTU */}
+                          <div>
+                            <div className="flex items-start justify-between gap-2 mb-3 border-b border-slate-100 pb-3">
+                              <div className="flex items-center gap-2.5">
+                                <button
+                                  onClick={() => toggleSelectCard(item.id)}
+                                  className="text-slate-400 hover:text-indigo-600 transition cursor-pointer"
+                                >
+                                  {isSelected ? (
+                                    <CheckSquare className="w-5 h-5 text-indigo-600" />
+                                  ) : (
+                                    <Square className="w-5 h-5" />
+                                  )}
+                                </button>
+                                <div>
+                                  <span className="font-mono font-black text-xs text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100">
+                                    {item.id}
+                                  </span>
+                                  <p className="text-[10px] text-slate-400 mt-0.5 font-medium">{item.tanggal}</p>
+                                </div>
+                              </div>
+
+                              <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase ${
                                 item.status === 'Disetujui' ? 'bg-emerald-100 text-emerald-800' : 
                                 item.status === 'Direvisi' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'
                               }`}>
                                 {item.status}
                               </span>
-                            </td>
-                            <td className="p-3 text-center">
-                              <div className="flex items-center justify-center space-x-1.5">
-                                <button 
-                                  onClick={() => setSelectedDetailRecord(item)}
-                                  className="p-1.5 bg-slate-100 hover:bg-sky-100 hover:text-sky-600 rounded-lg transition cursor-pointer"
-                                  title="Lihat Rincian & Status Admin"
-                                >
-                                  <Eye className="w-3.5 h-3.5" />
-                                </button>
+                            </div>
+
+                            {/* BIODATA PASIEN */}
+                            <div className="space-y-1 mb-4">
+                              <div className="flex justify-between items-baseline">
+                                <h4 className="text-sm font-black text-slate-900 truncate max-w-[180px]" title={item.namaPasien}>
+                                  {item.namaPasien}
+                                </h4>
+                                <span className="text-[11px] font-bold text-sky-700 font-mono bg-sky-50 px-2 py-0.5 rounded border border-sky-100">
+                                  RM: {item.noRm}
+                                </span>
                               </div>
-                            </td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr>
-                          <td colSpan={8} className="p-12 text-center text-slate-400 font-medium">
-                            {riwayatTagihan.length === 0 
-                              ? 'Belum ada data riwayat tagihan IGD yang diinput. Silakan buat input baru melalui tab Form.' 
-                              : 'Pencarian pasien atau filter tidak ditemukan.'}
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+
+                              <p className="text-[11px] text-slate-500 truncate" title={item.alamat || '-'}>
+                                <span className="font-medium">Alamat:</span> {item.alamat || '-'}
+                              </p>
+                              <p className="text-[11px] text-slate-500 truncate">
+                                <span className="font-medium">Dokter:</span> {item.dokter || 'Dokter Jaga IGD'}
+                              </p>
+                            </div>
+
+                            {/* BADGES METODE & TRIASE */}
+                            <div className="flex flex-wrap gap-1.5 mb-4">
+                              <span className={`px-2 py-0.5 text-[10px] font-bold rounded-md ${
+                                item.triase === 'Merah' ? 'bg-rose-100 text-rose-800 border border-rose-200' :
+                                item.triase === 'Kuning' ? 'bg-amber-100 text-amber-800 border border-amber-200' : 
+                                'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                              }`}>
+                                Triase: {item.triase || 'Hijau'}
+                              </span>
+
+                              <span className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-slate-100 text-slate-700 border border-slate-200">
+                                {item.penjaminan || 'Umum'}
+                              </span>
+
+                              <span className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-sky-100 text-sky-800 border border-sky-200">
+                                {item.metodeBayar}
+                              </span>
+                            </div>
+
+                            {/* SUMMARY ITEM & PETUGAS */}
+                            <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100 text-[11px] space-y-1 mb-4">
+                              <div className="flex justify-between text-slate-600">
+                                <span>Jumlah Tindakan:</span>
+                                <span className="font-bold text-slate-800">{totalQty} Item</span>
+                              </div>
+                              <div className="flex justify-between text-slate-600">
+                                <span>Petugas Kasir:</span>
+                                <span className="font-bold text-slate-800">{item.kasirNama || activeCashier.nama}</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* FOOTER KARTU & ACTION BUTTONS */}
+                          <div className="border-t border-slate-100 pt-3 mt-2">
+                            <div className="flex justify-between items-center mb-3">
+                              <span className="text-[10px] font-extrabold uppercase text-slate-400">Total Tarif</span>
+                              <span className="text-base font-black font-mono text-emerald-600">{formatRupiah(item.totalTarif)}</span>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2">
+                              <button 
+                                onClick={() => setSelectedDetailRecord(item)}
+                                className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                                <span>Rincian</span>
+                              </button>
+
+                              <button 
+                                onClick={() => handlePrintSingleRecord(item)}
+                                className="w-full py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer shadow-sm"
+                                title={`Cetak Formulir A4 untuk ${item.namaPasien}`}
+                              >
+                                <Printer className="w-3.5 h-3.5 text-emerald-600" />
+                                <span>Cetak A4 ({item.namaPasien.split(' ')[0]})</span>
+                              </button>
+                            </div>
+                          </div>
+
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="bg-slate-50 border border-dashed border-slate-300 rounded-3xl p-12 text-center text-slate-400 font-medium">
+                    {riwayatTagihan.length === 0 
+                      ? 'Belum ada data riwayat tagihan IGD yang diinput. Silakan buat input baru melalui tab Form.' 
+                      : 'Pencarian pasien atau filter tidak ditemukan.'}
+                  </div>
+                )}
 
               </div>
             </div>
@@ -1412,8 +1561,8 @@ export default function FormKasirIGD() {
       {/* ========================================================================= */}
       {/* TAMPILAN KHUSUS CETAK RESMI (PRINT-ONLY LAYOUT)                           */}
       {/* ========================================================================= */}
-      {!showShiftRecapPrint ? (
-        /* KERTAS PERINCIAN BIAYA SATUAN PASIEN */
+      {!showShiftRecapPrint && !showBatchPrint ? (
+        /* 1. CETAK A4 PERINCIAN BIAYA SATUAN PASIEN (BISA DARI FORM ATAU DARI KARTU RIWAYAT) */
         <div className="hidden print:block bg-white text-black p-6 font-sans">
           <div className="flex items-center justify-between border-b-2 border-black pb-4 mb-6">
             <div className="w-16 h-16 flex items-center justify-center">
@@ -1439,13 +1588,13 @@ export default function FormKasirIGD() {
 
           {/* DATA PASIEN PRINT FORMAT */}
           <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs mb-6 border border-black p-4">
-            <div><span className="font-bold">No. Rekam Medis (RM):</span> {formData.noRm || '-'}</div>
-            <div><span className="font-bold">Tanggal Pemeriksaan:</span> {formData.tanggal || '-'}</div>
-            <div><span className="font-bold">Nama Pasien:</span> {formData.nama || '-'}</div>
-            <div><span className="font-bold">Dokter Pemeriksa:</span> {formData.dokter || 'Dokter Jaga IGD'}</div>
-            <div><span className="font-bold">Tempat, Tgl Lahir:</span> {formData.ttl || '-'}</div>
-            <div><span className="font-bold">Triase / Penjaminan:</span> {formData.triase} ({formData.penjaminan})</div>
-            <div className="col-span-2"><span className="font-bold">Alamat:</span> {formData.alamat || '-'}</div>
+            <div><span className="font-bold">No. Rekam Medis (RM):</span> {activePrintTarget.noRm || '-'}</div>
+            <div><span className="font-bold">Tanggal Pemeriksaan:</span> {activePrintTarget.tanggal || '-'}</div>
+            <div><span className="font-bold">Nama Pasien:</span> {activePrintTarget.namaPasien || '-'}</div>
+            <div><span className="font-bold">Dokter Pemeriksa:</span> {activePrintTarget.dokter || 'Dokter Jaga IGD'}</div>
+            <div><span className="font-bold">Tempat, Tgl Lahir:</span> {activePrintTarget.ttl || '-'}</div>
+            <div><span className="font-bold">Triase / Penjaminan:</span> {activePrintTarget.triase} ({activePrintTarget.penjaminan})</div>
+            <div className="col-span-2"><span className="font-bold">Alamat:</span> {activePrintTarget.alamat || '-'}</div>
           </div>
 
           {/* TABEL ITEM TINDAKAN PRINT FORMAT */}
@@ -1461,7 +1610,7 @@ export default function FormKasirIGD() {
               </tr>
             </thead>
             <tbody className="divide-y divide-black/30">
-              {Object.entries(selectedItems).map(([id, qty], index) => {
+              {Object.entries(activePrintTarget.items || {}).map(([id, qty], index) => {
                 const item = daftarTindakanIGD.find(t => t.id === id);
                 if (!item) return null;
                 const subtotal = qty * item.tarif;
@@ -1482,14 +1631,74 @@ export default function FormKasirIGD() {
           {/* TOTAL PRINT FORMAT */}
           <div className="flex justify-between items-center border-t-2 border-black pt-3 mb-8 text-sm font-black">
             <span>TOTAL KESELURUHAN BIAYA TINDAKAN IGD:</span>
-            <span className="text-base font-mono">{formatRupiah(totalTarif)}</span>
+            <span className="text-base font-mono">{formatRupiah(activePrintTarget.totalTarif)}</span>
           </div>
 
           {/* TTD PRINT FORMAT */}
           <div className="grid grid-cols-2 gap-8 text-center text-xs mt-12">
             <div>
               <p className="mb-20">Pasien / Keluarga Pasien</p>
-              <p className="font-bold underline uppercase">({formData.nama || '...........................................'})</p>
+              <p className="font-bold underline uppercase">({activePrintTarget.namaPasien || '...........................................'})</p>
+            </div>
+            <div>
+              <p className="mb-1">Kerinci, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
+              <p className="mb-20">Petugas Kasir IGD</p>
+              <p className="font-bold underline uppercase">({activePrintTarget.kasirNama || activeCashier.nama})</p>
+            </div>
+          </div>
+        </div>
+      ) : showBatchPrint ? (
+        /* 2. CETAK REKAP PASIEN TERPILIH (BATCH MASS PRINT) */
+        <div className="hidden print:block bg-white text-black p-6 font-sans">
+          <div className="flex items-center justify-between border-b-2 border-black pb-4 mb-6">
+            <div className="w-16 h-16 flex items-center justify-center">
+              <img src="/logo-kerinci.png" alt="Pemkab Kerinci" className="max-h-full max-w-full object-contain" />
+            </div>
+            <div className="text-center px-2 flex-grow">
+              <p className="text-[11px] font-bold uppercase tracking-wider">PEMERINTAH KABUPATEN KERINCI</p>
+              <p className="text-[11px] font-bold uppercase tracking-wider">DINAS KESEHATAN - RSUD BUKIT KERMAN</p>
+              <h1 className="text-lg font-black uppercase tracking-wide mt-0.5">REKAPITULASI DAFTAR TRANSAKSI PASIEN IGD TERPILIH</h1>
+              <p className="text-[9px]">Dicetak Tanggal: {new Date().toLocaleDateString('id-ID')} | Jumlah Terpilih: {selectedBatchRecords.length} Pasien</p>
+            </div>
+            <div className="w-16 h-16 flex items-center justify-center">
+              <img src="/logo-rsud.jpeg" alt="RSUD Bukit Kerman" className="max-h-full max-w-full object-contain" />
+            </div>
+          </div>
+
+          <table className="w-full text-left border-collapse text-xs mb-6">
+            <thead>
+              <tr className="border-b-2 border-black">
+                <th className="py-2 px-2">No</th>
+                <th className="py-2 px-2">ID / Tanggal</th>
+                <th className="py-2 px-2">No RM / Nama Pasien</th>
+                <th className="py-2 px-2">Triase &amp; Penjaminan</th>
+                <th className="py-2 px-2">Metode Bayar</th>
+                <th className="py-2 px-2 text-right">Total Biaya</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-black/30">
+              {selectedBatchRecords.map((item, idx) => (
+                <tr key={item.id}>
+                  <td className="py-1.5 px-2">{idx + 1}</td>
+                  <td className="py-1.5 px-2 font-mono">{item.id}<br/><span className="text-[10px]">{item.tanggal}</span></td>
+                  <td className="py-1.5 px-2 font-bold">{item.namaPasien}<br/><span className="text-[10px] font-normal">RM: {item.noRm}</span></td>
+                  <td className="py-1.5 px-2">Triase: {item.triase}<br/>({item.penjaminan})</td>
+                  <td className="py-1.5 px-2">{item.metodeBayar}</td>
+                  <td className="py-1.5 px-2 text-right font-black">{formatRupiah(item.totalTarif)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <div className="flex justify-between items-center border-t-2 border-black pt-3 mb-8 text-sm font-black">
+            <span>TOTAL BIAYA KOLEKTIF PASIEN TERPILIH:</span>
+            <span className="text-base font-mono">{formatRupiah(selectedBatchRecords.reduce((s, i) => s + i.totalTarif, 0))}</span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-8 text-center text-xs mt-12">
+            <div>
+              <p className="mb-20">Mengetahui,<br/>Kepala Ruangan IGD</p>
+              <p className="font-bold underline uppercase">( ............................................ )</p>
             </div>
             <div>
               <p className="mb-1">Kerinci, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
@@ -1499,7 +1708,7 @@ export default function FormKasirIGD() {
           </div>
         </div>
       ) : (
-        /* PRINT LAYOUT KHUSUS REKAP SHIFT KEUANGAN */
+        /* 3. PRINT LAYOUT KHUSUS REKAP SHIFT KEUANGAN */
         <div className="hidden print:block bg-white text-black p-6 font-sans">
           <div className="flex items-center justify-between border-b-2 border-black pb-4 mb-6">
             <div className="w-16 h-16 flex items-center justify-center">
@@ -1614,7 +1823,6 @@ export default function FormKasirIGD() {
               </button>
             </div>
 
-            {/* THERMAL PAPER CONTAINER */}
             <div className="bg-amber-50/50 p-4 rounded-2xl border border-amber-200 font-mono text-[11px] text-slate-900 space-y-1 mb-4 shadow-inner">
               <div className="text-center font-bold border-b border-dashed border-slate-400 pb-2 mb-2">
                 <p>RSUD BUKIT KERMAN</p>
@@ -1753,26 +1961,13 @@ export default function FormKasirIGD() {
             <div className="flex justify-between items-center">
               <button
                 onClick={() => {
-                  setFormData(prev => ({
-                    ...prev,
-                    nama: selectedDetailRecord.namaPasien,
-                    noRm: selectedDetailRecord.noRm,
-                    ttl: selectedDetailRecord.ttl,
-                    alamat: selectedDetailRecord.alamat,
-                    tanggal: selectedDetailRecord.tanggal,
-                    dokter: selectedDetailRecord.dokter,
-                    triase: selectedDetailRecord.triase || 'Hijau',
-                    metodeBayar: selectedDetailRecord.metodeBayar,
-                    penjaminan: selectedDetailRecord.penjaminan
-                  }));
-                  setSelectedItems(selectedDetailRecord.items);
+                  const rec = selectedDetailRecord;
                   setSelectedDetailRecord(null);
-                  setActiveTab('form');
-                  setTimeout(() => handlePrint(), 100);
+                  handlePrintSingleRecord(rec);
                 }}
-                className="px-4 py-2.5 bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-300 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow"
               >
-                <Printer className="w-4 h-4 text-sky-600" /> Cetak Struk Ini
+                <Printer className="w-4 h-4" /> Cetak Formulir A4 Pasien Ini
               </button>
               <button
                 onClick={() => setSelectedDetailRecord(null)}
