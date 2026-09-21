@@ -24,7 +24,7 @@ interface Notification {
 }
 
 interface NotificationBellProps {
-  currentRole: string; // 'admin' | 'kasir' | 'manajemen'
+  currentRole: string; // 'admin' | 'kasir' | 'manajemen' | 'admin_verifikator'
 }
 
 export default function NotificationBell({ currentRole }: NotificationBellProps) {
@@ -88,6 +88,9 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
   const [latestToast, setLatestToast] = useState<Notification | null>(null);
 
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Helper untuk menentukan apakah role saat ini adalah Admin
+  const isAdminRole = currentRole?.toLowerCase().includes("admin");
 
   // Simpan preferensi ke localStorage
   useEffect(() => {
@@ -181,15 +184,22 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
     }
   };
 
-  // Fetch Data Notifikasi Utama dari Supabase
+  // Fetch Data Notifikasi Utama dari Supabase (PERBAIKAN: Admin Membaca Semua Notifikasi)
   const fetchNotifications = async (limitCount = pageLimit) => {
     setIsLoading(true);
-    const { data, error } = await supabase
+
+    let query = supabase
       .from("notifications")
       .select("*")
-      .or(`role.eq.${currentRole},role.eq.all`)
       .order("created_at", { ascending: false })
       .limit(limitCount);
+
+    // Jika BUKAN Admin, filter berdasarkan role spesifik. Jika ADMIN, ambil seluruhnya (Kasir, Rajal, Ranap, IGD, dsb.)
+    if (!isAdminRole) {
+      query = query.or(`role.eq.${currentRole},role.eq.all,role.eq.kasir`);
+    }
+
+    const { data, error } = await query;
 
     if (data && !error) {
       setNotifications(data.map((item) => ({ ...item, is_pinned: item.is_pinned || false })));
@@ -199,12 +209,12 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
     setIsLoading(false);
   };
 
-  // 1. Ambil Data Notifikasi & Dengar Realtime via Supabase (Ditambah Auto Retry Listener)
+  // 1. Ambil Data Notifikasi & Dengar Realtime via Supabase (PERBAIKAN: Realtime Listener Admin Bebas Filter Role)
   useEffect(() => {
     fetchNotifications();
 
     const channel = supabase
-      .channel(`realtime-bell-v7-${currentRole}`)
+      .channel(`realtime-bell-v8-${currentRole}`)
       .on(
         "postgres_changes",
         {
@@ -214,7 +224,11 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
         },
         (payload) => {
           const newNotif = { ...(payload.new as Notification), is_pinned: false };
-          if (newNotif.role === currentRole || newNotif.role === "all") {
+          
+          // PERBAIKAN: Jika Admin, terima SEMUA notifikasi baru tanpa melihat role target
+          const isTargetForUser = isAdminRole || newNotif.role === currentRole || newNotif.role === "all" || newNotif.role === "kasir";
+
+          if (isTargetForUser) {
             setNotifications((prev) => [newNotif, ...prev]);
             playChimeSound();
             speakNotificationTitle(newNotif.title);
@@ -283,21 +297,25 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
   const handleMarkAllAsRead = async () => {
     setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
 
-    await supabase
-      .from("notifications")
-      .update({ is_read: true })
-      .or(`role.eq.${currentRole},role.eq.all`)
-      .eq("is_read", false);
+    let query = supabase.from("notifications").update({ is_read: true }).eq("is_read", false);
+    if (!isAdminRole) {
+      query = query.or(`role.eq.${currentRole},role.eq.all`);
+    }
+
+    await query;
   };
 
   // 4. Handler Hapus Semua Notifikasi (Clear All)
   const handleConfirmClearAll = async () => {
     setShowClearConfirmModal(false);
     setNotifications([]);
-    await supabase
-      .from("notifications")
-      .delete()
-      .or(`role.eq.${currentRole},role.eq.all`);
+    
+    let query = supabase.from("notifications").delete();
+    if (!isAdminRole) {
+      query = query.or(`role.eq.${currentRole},role.eq.all`);
+    }
+    
+    await query;
   };
 
   // 5. Handler Hapus Satu Notifikasi
@@ -357,23 +375,23 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
 
   // 10. FITUR BARU: Toggle Pin/Unpin Notifikasi
   const handleTogglePin = async (e: React.MouseEvent, id: string) => {
-  e.stopPropagation();
-  const target = notifications.find(n => n.id === id);
-  if (!target) return;
-  
-  const newPinnedState = !target.is_pinned;
-  
-  // Update State Lokal
-  setNotifications((prev) =>
-    prev.map((n) => (n.id === id ? { ...n, is_pinned: newPinnedState } : n))
-  );
+    e.stopPropagation();
+    const target = notifications.find(n => n.id === id);
+    if (!target) return;
+    
+    const newPinnedState = !target.is_pinned;
+    
+    // Update State Lokal
+    setNotifications((prev) =>
+      prev.map((n) => (n.id === id ? { ...n, is_pinned: newPinnedState } : n))
+    );
 
-  // Rekomendasi: Sync juga ke database Supabase
-  await supabase
-    .from("notifications")
-    .update({ is_pinned: newPinnedState })
-    .eq("id", id);
-};
+    // Sync ke database Supabase
+    await supabase
+      .from("notifications")
+      .update({ is_pinned: newPinnedState })
+      .eq("id", id);
+  };
 
   // 11. FITUR BARU: Batch Selection Handler
   const toggleSelectItem = (id: string) => {
@@ -961,6 +979,7 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
                               <span className="text-[10px] text-slate-400 font-mono flex items-center gap-1">
                                 {formatTimeAgo(n.created_at)}
                                 {n.role === "all" && <span className="text-[9px] bg-slate-100 text-slate-500 px-1 rounded">Sistem</span>}
+                                {n.role && n.role !== "all" && <span className="text-[9px] bg-emerald-100 text-emerald-800 px-1 rounded font-bold uppercase">{n.role}</span>}
                               </span>
                               {!n.is_read && (
                                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
