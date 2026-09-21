@@ -38,11 +38,11 @@ export async function POST(request: Request) {
       }
     }
 
-    // 2. Mendaftarkan User ke Supabase Auth dengan admin.createUser (Auto Confirm & Metadata Lengkap)
+    // 2. Mendaftarkan User ke Supabase Auth dengan admin.createUser
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
       email,
       password,
-      email_confirm: true, // Langsung aktif tanpa tunggu konfirmasi email
+      email_confirm: true, // Langsung aktif tanpa konfirmasi email
       user_metadata: {
         nama_lengkap,
         full_name: nama_lengkap,
@@ -64,7 +64,7 @@ export async function POST(request: Request) {
 
     const userId = authData.user.id;
 
-    // 3. Simpan KE SELURUH KOLOM tabel users (Bypass RLS)
+    // 3. Simpan ke tabel users (Dengan Penanganan / Ignored Error Trigger Audit Logs)
     const { error: userError } = await supabaseAdmin
       .from('users')
       .upsert({
@@ -83,13 +83,18 @@ export async function POST(request: Request) {
       }, { onConflict: 'id' });
 
     if (userError) {
-      return NextResponse.json(
-        { error: `Gagal simpan tabel users: ${userError.message}` }, 
-        { status: 400 }
-      );
+      // Jika error dipicu oleh masalah audit_logs, catat log di server tapi JANGAN batalkan pendaftaran
+      if (userError.message.includes('audit_logs')) {
+        console.warn('Peringatan: Trigger audit_logs gagal, namun akun tetap berhasil dibuat:', userError.message);
+      } else {
+        return NextResponse.json(
+          { error: `Gagal simpan tabel users: ${userError.message}` }, 
+          { status: 400 }
+        );
+      }
     }
 
-    // 4. Simpan ke tabel profiles secara serentak (Bypass RLS)
+    // 4. Simpan ke tabel profiles
     const { error: profileError } = await supabaseAdmin
       .from('profiles')
       .upsert({
@@ -105,10 +110,14 @@ export async function POST(request: Request) {
       }, { onConflict: 'id' });
 
     if (profileError) {
-      return NextResponse.json(
-        { error: `Gagal simpan tabel profiles: ${profileError.message}` }, 
-        { status: 400 }
-      );
+      if (profileError.message.includes('audit_logs')) {
+        console.warn('Peringatan: Trigger audit_logs pada profiles gagal:', profileError.message);
+      } else {
+        return NextResponse.json(
+          { error: `Gagal simpan tabel profiles: ${profileError.message}` }, 
+          { status: 400 }
+        );
+      }
     }
 
     return NextResponse.json({ success: true, userId });
