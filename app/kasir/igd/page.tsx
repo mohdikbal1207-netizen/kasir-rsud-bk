@@ -120,6 +120,7 @@ export default function FormKasirIGD() {
   const [showThermalModal, setShowThermalModal] = useState(false);
   const [showShiftRecapPrint, setShowShiftRecapPrint] = useState(false);
   const [showBatchPrint, setShowBatchPrint] = useState(false);
+  const [showAllRecapPrint, setShowAllRecapPrint] = useState(false); // Mode cetak rekap semua
   const [singlePrintRecord, setSinglePrintRecord] = useState<TagihanRecord | null>(null);
   const [selectedCardIds, setSelectedCardIds] = useState<string[]>([]);
 
@@ -390,6 +391,7 @@ export default function FormKasirIGD() {
     setSinglePrintRecord(null);
     setShowShiftRecapPrint(false);
     setShowBatchPrint(false);
+    setShowAllRecapPrint(false);
     setTimeout(() => {
       window.print();
     }, 100);
@@ -400,6 +402,7 @@ export default function FormKasirIGD() {
     setSinglePrintRecord(record);
     setShowShiftRecapPrint(false);
     setShowBatchPrint(false);
+    setShowAllRecapPrint(false);
     setTimeout(() => {
       window.print();
     }, 200);
@@ -409,6 +412,7 @@ export default function FormKasirIGD() {
   const handlePrintShiftRecap = () => {
     setSinglePrintRecord(null);
     setShowBatchPrint(false);
+    setShowAllRecapPrint(false);
     setShowShiftRecapPrint(true);
     setTimeout(() => {
       window.print();
@@ -416,14 +420,31 @@ export default function FormKasirIGD() {
     }, 200);
   };
 
-  // Cetak Rekap Pasien Terpilih (Batch Print)
-  const handlePrintBatchSelected = () => {
-    if (selectedCardIds.length === 0) {
-      showToast('Pilih minimal 1 pasien terlebih dahulu!', 'error');
+  // Cetak Rekap Semua / Filtered List
+  const handlePrintAllRecap = () => {
+    if (filteredRiwayat.length === 0) {
+      showToast('Tidak ada data rekap untuk dicetak!', 'error');
       return;
     }
     setSinglePrintRecord(null);
     setShowShiftRecapPrint(false);
+    setShowBatchPrint(false);
+    setShowAllRecapPrint(true);
+    setTimeout(() => {
+      window.print();
+      setShowAllRecapPrint(false);
+    }, 200);
+  };
+
+  // Cetak Rekap Pasien Terpilih (Batch Print)
+  const handlePrintBatchSelected = () => {
+    if (selectedCardIds.length === 0) {
+      showToast('Pilih minimal 1 pasien terlebih dahulu untuk dicetak!', 'error');
+      return;
+    }
+    setSinglePrintRecord(null);
+    setShowShiftRecapPrint(false);
+    setShowAllRecapPrint(false);
     setShowBatchPrint(true);
     setTimeout(() => {
       window.print();
@@ -668,6 +689,27 @@ export default function FormKasirIGD() {
   return (
     <div className="min-h-screen flex flex-col bg-slate-100 font-sans relative pb-16 lg:pb-0">
       
+      {/* STYLING TAMBAHAN KHUSUS PRINT AGAR RAPI & PROFESIONAL */}
+      <style jsx global>{`
+        @media print {
+          @page {
+            size: A4;
+            margin: 15mm;
+          }
+          body {
+            background: white !important;
+            color: black !important;
+          -webkit-print-color-adjust: exact;
+          }
+          .print\\:hidden {
+            display: none !important;
+          }
+          .print\\:block {
+            display: block !important;
+          }
+        }
+      `}</style>
+
       {/* TOAST NOTIFICATION COMPONENT */}
       {toast && (
         <div className="fixed top-5 right-5 z-50 animate-bounce print:hidden">
@@ -754,1233 +796,1298 @@ export default function FormKasirIGD() {
                     <h1 className="text-xl sm:text-2xl font-black uppercase tracking-wide text-slate-900 mt-0.5">RSUD BUKIT KERMAN</h1>
                     <p className="text-[11px] text-slate-600">Desa Pondok, Kecamatan Bukit Kerman, Kode Pos: 37176</p>
                     <p className="text-[11px] text-slate-600">Website: https://rsudbukitkerman.kerincikab.go.id | e-mail: rsubukitkerman@gmail.com</p>
+                </div>
+                <div className="w-16 h-16 sm:w-20 sm:h-20 flex-shrink-0 flex items-center justify-center">
+                  <img src="/logo-rsud.jpeg" alt="RSUD Bukit Kerman" className="max-h-full max-w-full object-contain rounded-lg shadow-sm" />
+                </div>
+              </div>
+
+              <div className="text-center mb-8">
+                <div className="inline-block bg-slate-900 text-white text-xs font-extrabold px-6 py-2 rounded-full uppercase tracking-widest shadow-md">
+                  FORMULIR PEMERIKSAAN &amp; RINCIAN BIAYA IGD
+                </div>
+              </div>
+
+              {/* INFO PETUGAS KASIR */}
+              <div className="bg-gradient-to-r from-sky-50 to-indigo-50 border border-sky-200 p-4 rounded-2xl mb-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 rounded-xl bg-sky-600 text-white flex items-center justify-center font-black shadow-inner">
+                    <UserCheck className="w-5 h-5" />
                   </div>
-                  <div className="w-16 h-16 sm:w-20 sm:h-20 flex-shrink-0 flex items-center justify-center">
-                    <img src="/logo-rsud.jpeg" alt="RSUD Bukit Kerman" className="max-h-full max-w-full object-contain rounded-lg shadow-sm" />
+                  <div>
+                    <p className="text-[10px] font-extrabold uppercase tracking-wider text-sky-700">Petugas Penginput Data (Penanggung Jawab Sesi)</p>
+                    <p className="text-sm font-black text-slate-900">{activeCashier.nama} <span className="text-xs font-medium text-slate-500">(NIP / ID: {activeCashier.id})</span></p>
                   </div>
                 </div>
+                <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-3 py-1.5 rounded-full uppercase border border-emerald-300 flex items-center gap-1.5">
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" /> STATUS AKSES: {activeCashier.role}
+                </span>
+              </div>
 
-                <div className="text-center mb-8">
-                  <div className="inline-block bg-slate-900 text-white text-xs font-extrabold px-6 py-2 rounded-full uppercase tracking-widest shadow-md">
-                    FORMULIR PEMERIKSAAN &amp; RINCIAN BIAYA IGD
-                  </div>
-                </div>
-
-                {/* INFO PETUGAS KASIR */}
-                <div className="bg-gradient-to-r from-sky-50 to-indigo-50 border border-sky-200 p-4 rounded-2xl mb-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 rounded-xl bg-sky-600 text-white flex items-center justify-center font-black shadow-inner">
-                      <UserCheck className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-extrabold uppercase tracking-wider text-sky-700">Petugas Penginput Data (Penanggung Jawab Sesi)</p>
-                      <p className="text-sm font-black text-slate-900">{activeCashier.nama} <span className="text-xs font-medium text-slate-500">(NIP / ID: {activeCashier.id})</span></p>
-                    </div>
-                  </div>
-                  <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-3 py-1.5 rounded-full uppercase border border-emerald-300 flex items-center gap-1.5">
-                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" /> STATUS AKSES: {activeCashier.role}
-                  </span>
-                </div>
-
-                {/* ALERT PASIEN LAMA */}
-                {pasienPreviousHistory.length > 0 && (
-                  <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-r-2xl mb-6 shadow-sm">
-                    <div className="flex items-start space-x-3">
-                      <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-                      <div className="flex-grow">
-                        <p className="text-xs font-black text-amber-900 uppercase">
-                          Pasien Ditemukan! Terdeteksi {pasienPreviousHistory.length} Kali Kunjungan IGD Sebelumnya.
-                        </p>
-                        <p className="text-[11px] text-amber-800 mt-0.5">
-                          Nomor RM <span className="font-bold">{formData.noRm}</span> sudah terdaftar atas nama <span className="font-bold">{pasienPreviousHistory[0].namaPasien}</span>.
-                        </p>
-                        <button
-                          onClick={() => autofillPasienData(pasienPreviousHistory[0])}
-                          className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[11px] font-bold transition shadow cursor-pointer"
-                        >
-                          <RefreshCw className="w-3 h-3" /> Isi Otomatis Biodata Pasien
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* FORM INPUT DATA PASIEN */}
-                <div className="bg-slate-50/80 p-6 rounded-3xl border border-slate-200 mb-8 space-y-4 shadow-sm relative">
-                  <h3 className="text-xs font-black uppercase text-slate-900 tracking-wider flex items-center gap-2 border-b border-slate-200 pb-2">
-                    <User className="w-4 h-4 text-sky-600" /> Identitas Pasien &amp; Informasi Klinis
-                  </h3>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 relative">
-                    <div className="relative">
-                      <label className="block text-[11px] font-bold uppercase text-slate-700 mb-1">Nomor Rekam Medis (No RM)</label>
-                      <div className="relative">
-                        <Search className="absolute left-3 top-3 w-4 h-4 text-slate-400" />
-                        <input 
-                          type="text" 
-                          name="noRm" 
-                          value={formData.noRm} 
-                          onChange={handleInputChange} 
-                          placeholder="Contoh: 00-12-34 (Ketik untuk deteksi otomatis)" 
-                          className="w-full pl-10 pr-3 py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold text-sky-800 focus:ring-2 focus:ring-sky-500 shadow-sm"
-                        />
-                      </div>
-
-                      {/* AUTOCOMPLETE SUGGESTIONS DROPDOWN */}
-                      {patientSuggestions.length > 0 && formData.noRm.trim() !== '' && pasienPreviousHistory.length === 0 && (
-                        <div className="absolute z-20 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl max-h-48 overflow-y-auto">
-                          <div className="p-2 text-[10px] font-bold text-slate-400 uppercase border-b border-slate-100">Saran Riwayat Pasien:</div>
-                          {patientSuggestions.map(s => (
-                            <div 
-                              key={s.id}
-                              onClick={() => autofillPasienData(s)}
-                              className="p-2.5 hover:bg-sky-50 cursor-pointer border-b border-slate-50 text-xs flex justify-between items-center"
-                            >
-                              <div>
-                                <span className="font-bold text-slate-900">{s.namaPasien}</span>
-                                <span className="text-[10px] text-slate-500 ml-2 font-mono">RM: {s.noRm}</span>
-                              </div>
-                              <span className="text-[10px] text-sky-600 font-bold bg-sky-100 px-2 py-0.5 rounded">Pilih</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-bold uppercase text-slate-700 mb-1">Nama Lengkap Pasien</label>
-                      <input 
-                        type="text" 
-                        name="nama" 
-                        value={formData.nama} 
-                        onChange={handleInputChange} 
-                        placeholder="Masukkan nama lengkap pasien" 
-                        className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-sky-500 shadow-sm"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-bold uppercase text-slate-700 mb-1">Tempat, Tanggal Lahir (TTL)</label>
-                      <input 
-                        type="text" 
-                        name="ttl" 
-                        value={formData.ttl} 
-                        onChange={handleInputChange} 
-                        placeholder="Contoh: Kerinci, 12 Januari 1990" 
-                        className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-sky-500 shadow-sm"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-bold uppercase text-slate-700 mb-1">Tanggal Pemeriksaan IGD</label>
-                      <input 
-                        type="date" 
-                        name="tanggal" 
-                        value={formData.tanggal} 
-                        onChange={handleInputChange} 
-                        className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-sky-500 shadow-sm"
-                      />
-                    </div>
-
-                    <div className="md:col-span-2">
-                      <label className="block text-[11px] font-bold uppercase text-slate-700 mb-1">Alamat Domisili Lengkap</label>
-                      <input 
-                        type="text" 
-                        name="alamat" 
-                        value={formData.alamat} 
-                        onChange={handleInputChange} 
-                        placeholder="Masukkan alamat lengkap pasien" 
-                        className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-sky-500 shadow-sm"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-bold uppercase text-slate-700 mb-1">Dokter Pemeriksa IGD</label>
-                      <input 
-                        type="text" 
-                        name="dokter" 
-                        value={formData.dokter} 
-                        onChange={handleInputChange} 
-                        placeholder="Nama Dokter Jaga IGD" 
-                        className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-sky-500 shadow-sm"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-bold uppercase text-slate-700 mb-1">Kategori Triase IGD</label>
-                      <select 
-                        name="triase"
-                        value={formData.triase}
-                        onChange={handleInputChange}
-                        className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-sky-500 shadow-sm"
-                      >
-                        <option value="Hijau">Hijau - Non-Darurat / Ringan</option>
-                        <option value="Kuning">Kuning - Darurat Ringan / Sedang</option>
-                        <option value="Merah">Merah - Resusitasi / Gawat Darurat</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-bold uppercase text-slate-700 mb-1">Metode Pembayaran</label>
-                      <select 
-                        name="metodeBayar"
-                        value={formData.metodeBayar}
-                        onChange={handleInputChange}
-                        className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-sky-500 shadow-sm"
-                      >
-                        <option value="Tunai / Cash">Tunai / Cash (Fisik di Laci)</option>
-                        <option value="Online / QRIS">Online / QRIS (Transfer / Rekening RSUD)</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-bold uppercase text-slate-700 mb-1">Penjaminan Pasien</label>
-                      <select 
-                        name="penjaminan"
-                        value={formData.penjaminan}
-                        onChange={handleInputChange}
-                        className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-sky-500 shadow-sm"
-                      >
-                        <option value="Umum">Umum / Mandiri</option>
-                        <option value="BPJS">BPJS Kesehatan</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-
-                {/* TABEL TINDAKAN IGD & PANEL QUICK PICK */}
-                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mb-3">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-xs font-black uppercase text-slate-900 tracking-wider flex items-center gap-2">
-                      <Stethoscope className="w-4 h-4 text-sky-600" /> Daftar Tindakan &amp; Pemeriksaan IGD
-                    </h3>
-                    {Object.keys(selectedItems).length > 0 && (
+              {/* ALERT PASIEN LAMA */}
+              {pasienPreviousHistory.length > 0 && (
+                <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-r-2xl mb-6 shadow-sm">
+                  <div className="flex items-start space-x-3">
+                    <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                    <div className="flex-grow">
+                      <p className="text-xs font-black text-amber-900 uppercase">
+                        Pasien Ditemukan! Terdeteksi {pasienPreviousHistory.length} Kali Kunjungan IGD Sebelumnya.
+                      </p>
+                      <p className="text-[11px] text-amber-800 mt-0.5">
+                        Nomor RM <span className="font-bold">{formData.noRm}</span> sudah terdaftar atas nama <span className="font-bold">{pasienPreviousHistory[0].namaPasien}</span>.
+                      </p>
                       <button
-                        onClick={handleClearSelectedItems}
-                        className="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-[10px] font-bold transition flex items-center gap-1 cursor-pointer"
-                        title="Kosongkan semua item terpilih"
+                        onClick={() => autofillPasienData(pasienPreviousHistory[0])}
+                        className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[11px] font-bold transition shadow cursor-pointer"
                       >
-                        <Trash2 className="w-3 h-3" /> Kosongkan ({Object.values(selectedItems).reduce((a,b)=>a+b,0)})
+                        <RefreshCw className="w-3 h-3" /> Isi Otomatis Biodata Pasien
                       </button>
-                    )}
-                  </div>
-                  <div className="relative w-full sm:w-72">
-                    <Search className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-400" />
-                    <input 
-                      type="text" 
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      placeholder="Cari tindakan medis..." 
-                      className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:ring-2 focus:ring-sky-500 font-medium"
-                    />
-                  </div>
-                </div>
-
-                {/* BARIS TINDAKAN FAVORIT (QUICK SHORTCUTS) */}
-                <div className="bg-sky-50/70 border border-sky-200 p-3.5 rounded-2xl mb-4">
-                  <div className="flex items-center gap-1.5 mb-2 text-sky-900 text-[11px] font-black uppercase">
-                    <Zap className="w-3.5 h-3.5 text-amber-500" /> Pintasan Cepat Tindakan Sering Digunakan:
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {['1', '17', '41', '12', '39', '20'].map((id) => {
-                      const item = daftarTindakanIGD.find(t => t.id === id);
-                      if (!item) return null;
-                      return (
-                        <button
-                          key={id}
-                          onClick={() => handleQtyChange(item.id, (selectedItems[item.id] || 0) + 1)}
-                          className="px-3 py-1.5 bg-white hover:bg-sky-600 hover:text-white text-sky-800 border border-sky-300 rounded-xl text-[11px] font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm group"
-                        >
-                          <span className="group-hover:text-white">+ {item.nama}</span>
-                          <span className="text-slate-500 group-hover:text-sky-100 font-mono text-[10px]">({formatRupiah(item.tarif)})</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* FILTER KATEGORI (CHIPS/BADGES) */}
-                <div className="flex flex-wrap gap-1.5 mb-4">
-                  {kategoriList.map((kat) => (
-                    <button
-                      key={kat}
-                      onClick={() => setSelectedKategoriFilter(kat)}
-                      className={`px-3 py-1 rounded-full text-[10px] font-bold transition cursor-pointer ${
-                        selectedKategoriFilter === kat
-                          ? 'bg-sky-700 text-white shadow-sm'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
-                    >
-                      {kat}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="overflow-x-auto border border-slate-200 rounded-2xl mb-6 shadow-sm max-h-[450px] overflow-y-auto">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead className="sticky top-0 bg-slate-900 text-white uppercase text-[10px] z-10">
-                      <tr>
-                        <th className="p-3 border-b">Kategori</th>
-                        <th className="p-3 border-b">Jenis Pemeriksaan / Tindakan Medis IGD</th>
-                        <th className="p-3 text-right border-b">Tarif (Rp)</th>
-                        <th className="p-3 text-center w-36 border-b">Jumlah (Qty)</th>
-                        <th className="p-3 text-right border-b">Subtotal</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {filteredTindakan.length > 0 ? (
-                        filteredTindakan.map((item) => {
-                          const qty = selectedItems[item.id] || 0;
-                          const subtotal = qty * item.tarif;
-
-                          return (
-                            <tr key={item.id} className="hover:bg-slate-50 transition">
-                              <td className="p-3 font-bold text-[10px] text-sky-700 uppercase">{item.kategori}</td>
-                              <td className="p-3 font-bold text-slate-800">{item.nama}</td>
-                              <td className="p-3 text-right text-slate-600">{formatRupiah(item.tarif)}</td>
-                              <td className="p-3 text-center">
-                                <div className="flex items-center justify-center space-x-1">
-                                  <button
-                                    onClick={() => handleQtyChange(item.id, qty - 1)}
-                                    className="w-7 h-7 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg flex items-center justify-center font-bold transition cursor-pointer"
-                                    title="Kurangi"
-                                  >
-                                    <Minus className="w-3 h-3" />
-                                  </button>
-                                  <input 
-                                    type="number" 
-                                    min="0" 
-                                    value={qty === 0 ? '' : qty} 
-                                    onChange={(e) => handleQtyChange(item.id, parseInt(e.target.value) || 0)} 
-                                    placeholder="0"
-                                    className="w-12 p-1 text-center border border-slate-300 rounded-lg text-xs font-bold bg-white focus:ring-2 focus:ring-sky-500"
-                                  />
-                                  <button
-                                    onClick={() => handleQtyChange(item.id, qty + 1)}
-                                    className="w-7 h-7 bg-sky-600 hover:bg-sky-500 text-white rounded-lg flex items-center justify-center font-bold transition cursor-pointer shadow-sm"
-                                    title="Tambah"
-                                  >
-                                    <Plus className="w-3 h-3" />
-                                  </button>
-                                </div>
-                              </td>
-                              <td className="p-3 text-right font-black text-sky-700">
-                                {subtotal > 0 ? formatRupiah(subtotal) : '-'}
-                              </td>
-                            </tr>
-                          );
-                        })
-                      ) : (
-                        <tr>
-                          <td colSpan={5} className="p-6 text-center text-slate-400">
-                            Tindakan tidak ditemukan.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* TOTAL KESELURUHAN TARIF & KALKULATOR PEMBAYARAN TUNAI */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8">
-                  <div className="bg-slate-900 text-white p-5 rounded-2xl flex flex-col justify-between shadow-lg">
-                    <div className="flex items-center space-x-2">
-                      <Calculator className="w-6 h-6 text-sky-400" />
-                      <div>
-                        <p className="text-xs uppercase tracking-wider text-slate-400 font-bold">Total Biaya Tindakan IGD</p>
-                        <p className="text-sm font-semibold text-slate-200">Akumulasi Seluruh Pemeriksaan</p>
-                      </div>
-                    </div>
-                    <div className="text-2xl sm:text-3xl font-black text-sky-400 tracking-tight font-mono mt-3">
-                      {formatRupiah(totalTarif)}
                     </div>
                   </div>
+                </div>
+              )}
 
-                  {formData.metodeBayar === 'Tunai / Cash' ? (
-                    <div className="bg-emerald-900 text-white p-5 rounded-2xl flex flex-col justify-between shadow-lg">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-2">
-                          <Banknote className="w-6 h-6 text-emerald-300" />
-                          <div>
-                            <p className="text-xs uppercase tracking-wider text-emerald-200 font-bold">Kalkulator Pembayaran Tunai</p>
-                            <p className="text-sm font-semibold text-emerald-100">Uang Diterima dari Pasien</p>
+              {/* FORM INPUT DATA PASIEN */}
+              <div className="bg-slate-50/80 p-6 rounded-3xl border border-slate-200 mb-8 space-y-4 shadow-sm relative">
+                <h3 className="text-xs font-black uppercase text-slate-900 tracking-wider flex items-center gap-2 border-b border-slate-200 pb-2">
+                  <User className="w-4 h-4 text-sky-600" /> Identitas Pasien &amp; Informasi Klinis
+                </h3>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 relative">
+                  <div className="relative">
+                    <label className="block text-[11px] font-bold uppercase text-slate-700 mb-1">Nomor Rekam Medis (No RM)</label>
+                    <div className="relative">
+                      <Search className="absolute left-3 top-3 w-4 h-4 text-slate-400" />
+                      <input 
+                        type="text" 
+                        name="noRm" 
+                        value={formData.noRm} 
+                        onChange={handleInputChange} 
+                        placeholder="Contoh: 00-12-34 (Ketik untuk deteksi otomatis)" 
+                        className="w-full pl-10 pr-3 py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-bold text-sky-800 focus:ring-2 focus:ring-sky-500 shadow-sm"
+                      />
+                    </div>
+
+                    {/* AUTOCOMPLETE SUGGESTIONS DROPDOWN */}
+                    {patientSuggestions.length > 0 && formData.noRm.trim() !== '' && pasienPreviousHistory.length === 0 && (
+                      <div className="absolute z-20 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl max-h-48 overflow-y-auto">
+                        <div className="p-2 text-[10px] font-bold text-slate-400 uppercase border-b border-slate-100">Saran Riwayat Pasien:</div>
+                        {patientSuggestions.map(s => (
+                          <div 
+                            key={s.id}
+                            onClick={() => autofillPasienData(s)}
+                            className="p-2.5 hover:bg-sky-50 cursor-pointer border-b border-slate-50 text-xs flex justify-between items-center"
+                          >
+                            <div>
+                              <span className="font-bold text-slate-900">{s.namaPasien}</span>
+                              <span className="text-[10px] text-slate-500 ml-2 font-mono">RM: {s.noRm}</span>
+                            </div>
+                            <span className="text-[10px] text-sky-600 font-bold bg-sky-100 px-2 py-0.5 rounded">Pilih</span>
                           </div>
-                        </div>
-                      </div>
-                      <div className="mt-3 flex items-center gap-3">
-                        <input 
-                          type="number"
-                          value={bayarTunai}
-                          onChange={(e) => setBayarTunai(e.target.value === '' ? '' : Number(e.target.value))}
-                          placeholder="Masukkan nominal uang..."
-                          className="w-full p-2 bg-emerald-950 border border-emerald-600 rounded-xl text-xs font-mono font-bold text-white focus:ring-2 focus:ring-emerald-400"
-                        />
-                      </div>
-
-                      <div className="flex items-center gap-2 mt-2">
-                        <span className="text-[10px] text-emerald-200 font-bold">Pintasan Uang Pas:</span>
-                        <button
-                          onClick={() => setBayarTunai(totalTarif)}
-                          className="px-2.5 py-1 bg-emerald-800 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-mono font-bold transition cursor-pointer border border-emerald-600"
-                        >
-                          Uang Pas ({formatRupiah(totalTarif)})
-                        </button>
-                      </div>
-
-                      <div className="flex justify-between items-center mt-3 pt-2 border-t border-emerald-700 text-xs">
-                        <span className="text-emerald-200 font-bold">Kembalian:</span>
-                        <span className="font-mono font-black text-base text-emerald-300">{formatRupiah(kembalianTunai)}</span>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="bg-sky-900 text-white p-5 rounded-2xl flex flex-col justify-between shadow-lg">
-                      <div className="flex items-center space-x-2">
-                        <Banknote className="w-6 h-6 text-sky-300" />
-                        <div>
-                          <p className="text-xs uppercase tracking-wider text-sky-200 font-bold">Metode QRIS / Online</p>
-                          <p className="text-sm font-semibold text-sky-100">Verifikasi Langsung ke Rekening RSUD</p>
-                        </div>
-                      </div>
-                      <p className="text-xs text-sky-200 mt-4">Pastikan bukti transfer/QRIS telah diverifikasi sebelum menyimpan.</p>
+                        ))}
                     </div>
                   )}
                 </div>
 
-                {/* TANDA TANGAN */}
-                <div className="grid grid-cols-2 gap-8 text-center text-xs font-medium text-slate-700 mb-8 pt-4">
-                  <div>
-                    <p className="mb-16">Pasien / PJ Pasien / Keluarga</p>
-                    <p className="font-bold border-b border-slate-400 pb-1 inline-block min-w-[180px] uppercase">
-                      ({formData.nama || '...........................................'})
-                    </p>
-                  </div>
-                  <div>
-                    <p className="mb-1">Kerinci, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
-                    <p className="mb-14">Petugas Kasir (Penanggung Jawab)</p>
-                    <p className="font-bold border-b border-slate-400 pb-1 inline-block min-w-[180px] uppercase">
-                      ( {activeCashier.nama} )
-                    </p>
-                  </div>
+                <div>
+                  <label className="block text-[11px] font-bold uppercase text-slate-700 mb-1">Nama Lengkap Pasien</label>
+                  <input 
+                    type="text" 
+                    name="nama" 
+                    value={formData.nama} 
+                    onChange={handleInputChange} 
+                    placeholder="Masukkan nama lengkap pasien" 
+                    className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-sky-500 shadow-sm"
+                  />
                 </div>
 
-                {/* TOMBOL AKSI */}
-                <div className="flex flex-col sm:flex-row items-center justify-between border-t border-slate-200 pt-4 gap-3">
-                  <div className="flex items-center gap-2 w-full sm:w-auto">
-                    <button 
-                      onClick={handleResetForm}
-                      className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition cursor-pointer"
-                    >
-                      Reset Form
-                    </button>
-                    <button
-                      onClick={copySummaryToClipboard}
-                      className="px-3 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer"
-                      title="Salin ringkasan tagihan ke clipboard"
-                    >
-                      <Copy className="w-3.5 h-3.5" /> Salin Teks
-                    </button>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto justify-end">
-                    <button 
-                      onClick={() => setShowThermalModal(true)}
-                      className="w-full sm:w-auto px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-300 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer"
-                    >
-                      <Receipt className="w-4 h-4 text-indigo-600" /> Struk Thermal
-                    </button>
-                    <button 
-                      onClick={() => setShowPreviewModal(true)}
-                      className="w-full sm:w-auto px-4 py-2.5 bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-300 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer"
-                    >
-                      <Eye className="w-4 h-4 text-sky-600" /> Pratinjau Struk
-                    </button>
-                    <button 
-                      onClick={handlePrint}
-                      className="w-full sm:w-auto px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 shadow cursor-pointer"
-                    >
-                      <Printer className="w-4 h-4 text-sky-400" /> Cetak Formulir
-                    </button>
-                    <button 
-                      onClick={handleSaveAndSend}
-                      disabled={isSubmitting}
-                      className="w-full sm:w-auto px-6 py-2.5 bg-sky-700 hover:bg-sky-600 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 shadow cursor-pointer disabled:opacity-50"
-                    >
-                      {isSubmitting ? (
-                        <>
-                          <RefreshCw className="w-4 h-4 animate-spin" />
-                          <span>Menyimpan ke Supabase...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Save className="w-4 h-4" />
-                          <span>Simpan &amp; Kirim (Ctrl+S)</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
+                <div>
+                  <label className="block text-[11px] font-bold uppercase text-slate-700 mb-1">Tempat, Tanggal Lahir (TTL)</label>
+                  <input 
+                    type="text" 
+                    name="ttl" 
+                    value={formData.ttl} 
+                    onChange={handleInputChange} 
+                    placeholder="Contoh: Kerinci, 12 Januari 1990" 
+                    className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-sky-500 shadow-sm"
+                  />
                 </div>
 
-              </div>
+                <div>
+                  <label className="block text-[11px] font-bold uppercase text-slate-700 mb-1">Tanggal Pemeriksaan IGD</label>
+                  <input 
+                    type="date" 
+                    name="tanggal" 
+                    value={formData.tanggal} 
+                    onChange={handleInputChange} 
+                    className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-sky-500 shadow-sm"
+                  />
+                </div>
 
-              {/* FLOATING MOBILE TOTAL BAR */}
-              {Object.keys(selectedItems).length > 0 && activeTab === 'form' && (
-                <div className="fixed bottom-0 left-0 right-0 z-40 bg-slate-900/95 backdrop-blur text-white p-3 px-4 flex items-center justify-between shadow-2xl lg:hidden border-t border-slate-700">
-                  <div>
-                    <p className="text-[10px] text-slate-400 uppercase font-bold">Total ({Object.values(selectedItems).reduce((a,b)=>a+b,0)} Tindakan):</p>
-                    <p className="text-sm font-black font-mono text-sky-400">{formatRupiah(totalTarif)}</p>
-                  </div>
-                  <button
-                    onClick={handleSaveAndSend}
-                    disabled={isSubmitting}
-                    className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold shadow cursor-pointer disabled:opacity-50"
+                <div className="md:col-span-2">
+                  <label className="block text-[11px] font-bold uppercase text-slate-700 mb-1">Alamat Domisili Lengkap</label>
+                  <input 
+                    type="text" 
+                    name="alamat" 
+                    value={formData.alamat} 
+                    onChange={handleInputChange} 
+                    placeholder="Masukkan alamat lengkap pasien" 
+                    className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-sky-500 shadow-sm"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold uppercase text-slate-700 mb-1">Dokter Pemeriksa IGD</label>
+                  <input 
+                    type="text" 
+                    name="dokter" 
+                    value={formData.dokter} 
+                    onChange={handleInputChange} 
+                    placeholder="Nama Dokter Jaga IGD" 
+                    className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-sky-500 shadow-sm"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold uppercase text-slate-700 mb-1">Kategori Triase IGD</label>
+                  <select 
+                    name="triase"
+                    value={formData.triase}
+                    onChange={handleInputChange}
+                    className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-sky-500 shadow-sm"
                   >
-                    {isSubmitting ? 'Menyimpan...' : 'Simpan Tagihan'}
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* TAB 2: DAFTAR RIWAYAT & KARTU TAGIHAN (UPDATED: MODEL KARTU GRID) */}
-          {activeTab === 'riwayat' && (
-            <div className="space-y-6">
-              
-              {/* KARTU STATISTIK KEUANGAN & TRIASE */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="bg-slate-900 text-white p-5 rounded-3xl shadow-xl flex flex-col justify-between">
-                  <div>
-                    <p className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">Total Filter ({filteredRiwayat.length} Pasien)</p>
-                    <p className="text-xl sm:text-2xl font-black font-mono text-emerald-400 mt-1">{formatRupiah(totalNominalFilter)}</p>
-                  </div>
-                  <p className="text-[10px] text-slate-400 mt-3">Pendapatan keseluruhan</p>
+                    <option value="Hijau">Hijau - Non-Darurat / Ringan</option>
+                    <option value="Kuning">Kuning - Darurat Ringan / Sedang</option>
+                    <option value="Merah">Merah - Resusitasi / Gawat Darurat</option>
+                  </select>
                 </div>
 
-                <div className="bg-rose-900 text-white p-5 rounded-3xl shadow-xl flex flex-col justify-between">
-                  <div>
-                    <p className="text-[10px] font-extrabold uppercase tracking-widest text-rose-200">Triase Merah (Resusitasi)</p>
-                    <p className="text-xl sm:text-2xl font-black font-mono text-white mt-1">
-                      {formatRupiah(filteredRiwayat.filter(i => i.triase === 'Merah').reduce((s, i) => s + i.totalTarif, 0))}
-                    </p>
-                  </div>
-                  <p className="text-[10px] text-rose-200 mt-3">{filteredRiwayat.filter(i => i.triase === 'Merah').length} Kasus</p>
+                <div>
+                  <label className="block text-[11px] font-bold uppercase text-slate-700 mb-1">Metode Pembayaran</label>
+                  <select 
+                    name="metodeBayar"
+                    value={formData.metodeBayar}
+                    onChange={handleInputChange}
+                    className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-sky-500 shadow-sm"
+                  >
+                    <option value="Tunai / Cash">Tunai / Cash (Fisik di Laci)</option>
+                    <option value="Online / QRIS">Online / QRIS (Transfer / Rekening RSUD)</option>
+                  </select>
                 </div>
 
-                <div className="bg-amber-800 text-white p-5 rounded-3xl shadow-xl flex flex-col justify-between">
-                  <div>
-                    <p className="text-[10px] font-extrabold uppercase tracking-widest text-amber-200">Triase Kuning (Darurat)</p>
-                    <p className="text-xl sm:text-2xl font-black font-mono text-white mt-1">
-                      {formatRupiah(filteredRiwayat.filter(i => i.triase === 'Kuning').reduce((s, i) => s + i.totalTarif, 0))}
-                    </p>
-                  </div>
-                  <p className="text-[10px] text-amber-200 mt-3">{filteredRiwayat.filter(i => i.triase === 'Kuning').length} Kasus</p>
-                </div>
-
-                <div className="bg-emerald-800 text-white p-5 rounded-3xl shadow-xl flex flex-col justify-between">
-                  <div>
-                    <p className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-200">Triase Hijau (Ringan)</p>
-                    <p className="text-xl sm:text-2xl font-black font-mono text-white mt-1">
-                      {formatRupiah(filteredRiwayat.filter(i => i.triase === 'Hijau').reduce((s, i) => s + i.totalTarif, 0))}
-                    </p>
-                  </div>
-                  <p className="text-[10px] text-emerald-200 mt-3">{filteredRiwayat.filter(i => i.triase === 'Hijau').length} Kasus</p>
+                <div>
+                  <label className="block text-[11px] font-bold uppercase text-slate-700 mb-1">Penjaminan Pasien</label>
+                  <select 
+                    name="penjaminan"
+                    value={formData.penjaminan}
+                    onChange={handleInputChange}
+                    className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-sky-500 shadow-sm"
+                  >
+                    <option value="Umum">Umum / Mandiri</option>
+                    <option value="BPJS">BPJS Kesehatan</option>
+                  </select>
                 </div>
               </div>
+            </div>
 
-              {/* PANEL FILTER & KONTROL MASAL */}
-              <div className="bg-white text-slate-800 shadow-2xl rounded-3xl p-6 sm:p-8 border border-slate-200 space-y-6">
-                
-                <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 border-b border-slate-200 pb-4">
-                  <div className="flex flex-wrap items-center gap-3">
+            {/* TABEL TINDAKAN IGD & PANEL QUICK PICK */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mb-3">
+              <div className="flex items-center gap-2">
+                <h3 className="text-xs font-black uppercase text-slate-900 tracking-wider flex items-center gap-2">
+                  <Stethoscope className="w-4 h-4 text-sky-600" /> Daftar Tindakan &amp; Pemeriksaan IGD
+                </h3>
+                {Object.keys(selectedItems).length > 0 && (
+                  <button
+                    onClick={handleClearSelectedItems}
+                    className="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-[10px] font-bold transition flex items-center gap-1 cursor-pointer"
+                    title="Kosongkan semua item terpilih"
+                  >
+                    <Trash2 className="w-3 h-3" /> Kosongkan ({Object.values(selectedItems).reduce((a,b)=>a+b,0)})
+                  </button>
+                )}
+              </div>
+              <div className="relative w-full sm:w-72">
+                <Search className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-400" />
+                <input 
+                  type="text" 
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="Cari tindakan medis..." 
+                  className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:ring-2 focus:ring-sky-500 font-medium"
+                />
+              </div>
+            </div>
+
+            {/* BARIS TINDAKAN FAVORIT (QUICK SHORTCUTS) */}
+            <div className="bg-sky-50/70 border border-sky-200 p-3.5 rounded-2xl mb-4">
+              <div className="flex items-center gap-1.5 mb-2 text-sky-900 text-[11px] font-black uppercase">
+                <Zap className="w-3.5 h-3.5 text-amber-500" /> Pintasan Cepat Tindakan Sering Digunakan:
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {['1', '17', '41', '12', '39', '20'].map((id) => {
+                  const item = daftarTindakanIGD.find(t => t.id === id);
+                  if (!item) return null;
+                  return (
                     <button
-                      onClick={toggleSelectAllCards}
-                      className="flex items-center gap-2 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition cursor-pointer border border-slate-300"
+                      key={id}
+                      onClick={() => handleQtyChange(item.id, (selectedItems[item.id] || 0) + 1)}
+                      className="px-3 py-1.5 bg-white hover:bg-sky-600 hover:text-white text-sky-800 border border-sky-300 rounded-xl text-[11px] font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm group"
                     >
-                      {selectedCardIds.length === filteredRiwayat.length && filteredRiwayat.length > 0 ? (
-                        <CheckSquare className="w-4 h-4 text-emerald-600" />
-                      ) : (
-                        <Square className="w-4 h-4 text-slate-400" />
-                      )}
-                      <span>Pilih Semua ({selectedCardIds.length}/{filteredRiwayat.length})</span>
+                      <span className="group-hover:text-white">+ {item.nama}</span>
+                      <span className="text-slate-500 group-hover:text-sky-100 font-mono text-[10px]">({formatRupiah(item.tarif)})</span>
                     </button>
+                  );
+                })}
+              </div>
+            </div>
 
-                    {selectedCardIds.length > 0 && (
-                      <button
-                        onClick={handlePrintBatchSelected}
-                        className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition shadow cursor-pointer animate-pulse"
-                      >
-                        <Printer className="w-4 h-4" />
-                        <span>Cetak Rekap Pasien Terpilih ({selectedCardIds.length})</span>
-                      </button>
-                    )}
-                  </div>
+            {/* FILTER KATEGORI (CHIPS/BADGES) */}
+            <div className="flex flex-wrap gap-1.5 mb-4">
+              {kategoriList.map((kat) => (
+                <button
+                  key={kat}
+                  onClick={() => setSelectedKategoriFilter(kat)}
+                  className={`px-3 py-1 rounded-full text-[10px] font-bold transition cursor-pointer ${
+                    selectedKategoriFilter === kat
+                      ? 'bg-sky-700 text-white shadow-sm'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {kat}
+                </button>
+              ))}
+            </div>
 
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      onClick={handleDownloadBackup}
-                      className="flex items-center gap-2 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-xl text-xs font-bold transition cursor-pointer shadow-sm"
-                      title="Unduh file JSON cadangan data riwayat"
-                    >
-                      <Download className="w-4 h-4 text-slate-600" />
-                      <span>Backup</span>
-                    </button>
-                    <button
-                      onClick={() => fileInputRef.current?.click()}
-                      className="flex items-center gap-2 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-xl text-xs font-bold transition cursor-pointer shadow-sm"
-                      title="Pulihkan data dari file JSON"
-                    >
-                      <Upload className="w-4 h-4 text-slate-600" />
-                      <span>Restore</span>
-                    </button>
-                    <button
-                      onClick={handlePrintShiftRecap}
-                      className="flex items-center gap-2 px-4 py-2 bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-300 rounded-xl text-xs font-bold transition cursor-pointer shadow-sm"
-                    >
-                      <Printer className="w-4 h-4" />
-                      <span>Rekap Shift</span>
-                    </button>
-                    <button
-                      onClick={handleExportExcel}
-                      className="flex items-center gap-2 px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-bold transition cursor-pointer shadow-sm"
-                    >
-                      <FileSpreadsheet className="w-4 h-4" />
-                      <span>Excel ({filteredRiwayat.length})</span>
-                    </button>
-                    <button
-                      onClick={() => setActiveTab('form')}
-                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition shadow cursor-pointer flex-shrink-0"
-                    >
-                      + Input Baru
-                    </button>
-                  </div>
-                </div>
-
-                {/* FILTER BAR */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-                  <div className="relative">
-                    <Search className="absolute left-3 top-3 w-3.5 h-3.5 text-slate-400" />
-                    <input 
-                      type="text" 
-                      value={riwayatSearchTerm}
-                      onChange={(e) => setRiwayatSearchTerm(e.target.value)}
-                      placeholder="Cari RM / Nama Pasien..." 
-                      className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-emerald-500"
-                    />
-                  </div>
-
-                  <div>
-                    <select
-                      value={filterStatusBayar}
-                      onChange={(e) => setFilterStatusBayar(e.target.value)}
-                      className="w-full p-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-emerald-500"
-                    >
-                      <option value="Semua Status Bayar">Semua Status Bayar</option>
-                      <option value="Lunas">Lunas</option>
-                      <option value="Belum Bayar">Belum Bayar</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <select
-                      value={filterPenjaminan}
-                      onChange={(e) => setFilterPenjaminan(e.target.value)}
-                      className="w-full p-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-emerald-500"
-                    >
-                      <option value="Semua Penjaminan">Semua Penjaminan</option>
-                      <option value="Umum">Umum / Mandiri</option>
-                      <option value="BPJS">BPJS Kesehatan</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <select
-                      value={filterTriase}
-                      onChange={(e) => setFilterTriase(e.target.value)}
-                      className="w-full p-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-emerald-500"
-                    >
-                      <option value="Semua Triase">Semua Triase</option>
-                      <option value="Merah">Triase Merah</option>
-                      <option value="Kuning">Triase Kuning</option>
-                      <option value="Hijau">Triase Hijau</option>
-                    </select>
-                  </div>
-
-                  <div className="relative">
-                    <Calendar className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-400" />
-                    <input 
-                      type="text" 
-                      value={filterTanggal}
-                      onChange={(e) => setFilterTanggal(e.target.value)}
-                      placeholder="dd/mm/yyyy" 
-                      className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-emerald-500"
-                    />
-                  </div>
-                </div>
-
-                {/* DAFTAR RIWAYAT - TAMPILAN KARTU GRID (CARD VIEW MODEL) */}
-                {filteredRiwayat.length > 0 ? (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                    {filteredRiwayat.map((item) => {
-                      const isSelected = selectedCardIds.includes(item.id);
-                      const totalQty = Object.values(item.items).reduce((a, b) => a + b, 0);
+            <div className="overflow-x-auto border border-slate-200 rounded-2xl mb-6 shadow-sm max-h-[450px] overflow-y-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead className="sticky top-0 bg-slate-900 text-white uppercase text-[10px] z-10">
+                  <tr>
+                    <th className="p-3 border-b">Kategori</th>
+                    <th className="p-3 border-b">Jenis Pemeriksaan / Tindakan Medis IGD</th>
+                    <th className="p-3 text-right border-b">Tarif (Rp)</th>
+                    <th className="p-3 text-center w-36 border-b">Jumlah (Qty)</th>
+                    <th className="p-3 text-right border-b">Subtotal</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredTindakan.length > 0 ? (
+                    filteredTindakan.map((item) => {
+                      const qty = selectedItems[item.id] || 0;
+                      const subtotal = qty * item.tarif;
 
                       return (
-                        <div 
-                          key={item.id} 
-                          className={`relative bg-white rounded-3xl border transition-all duration-200 p-5 shadow-sm hover:shadow-xl flex flex-col justify-between ${
-                            isSelected ? 'border-indigo-500 ring-2 ring-indigo-500/20 bg-indigo-50/10' : 'border-slate-200 hover:border-slate-300'
-                          }`}
-                        >
-                          {/* HEADER KARTU */}
-                          <div>
-                            <div className="flex items-start justify-between gap-2 mb-3 border-b border-slate-100 pb-3">
-                              <div className="flex items-center gap-2.5">
-                                <button
-                                  onClick={() => toggleSelectCard(item.id)}
-                                  className="text-slate-400 hover:text-indigo-600 transition cursor-pointer"
-                                >
-                                  {isSelected ? (
-                                    <CheckSquare className="w-5 h-5 text-indigo-600" />
-                                  ) : (
-                                    <Square className="w-5 h-5" />
-                                  )}
-                                </button>
-                                <div>
-                                  <span className="font-mono font-black text-xs text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100">
-                                    {item.id}
-                                  </span>
-                                  <p className="text-[10px] text-slate-400 mt-0.5 font-medium">{item.tanggal}</p>
-                                </div>
-                              </div>
-
-                              <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase ${
-                                item.status === 'Disetujui' ? 'bg-emerald-100 text-emerald-800' : 
-                                item.status === 'Direvisi' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'
-                              }`}>
-                                {item.status}
-                              </span>
-                            </div>
-
-                            {/* BIODATA PASIEN */}
-                            <div className="space-y-1 mb-4">
-                              <div className="flex justify-between items-baseline">
-                                <h4 className="text-sm font-black text-slate-900 truncate max-w-[180px]" title={item.namaPasien}>
-                                  {item.namaPasien}
-                                </h4>
-                                <span className="text-[11px] font-bold text-sky-700 font-mono bg-sky-50 px-2 py-0.5 rounded border border-sky-100">
-                                  RM: {item.noRm}
-                                </span>
-                              </div>
-
-                              <p className="text-[11px] text-slate-500 truncate" title={item.alamat || '-'}>
-                                <span className="font-medium">Alamat:</span> {item.alamat || '-'}
-                              </p>
-                              <p className="text-[11px] text-slate-500 truncate">
-                                <span className="font-medium">Dokter:</span> {item.dokter || 'Dokter Jaga IGD'}
-                              </p>
-                            </div>
-
-                            {/* BADGES METODE & TRIASE */}
-                            <div className="flex flex-wrap gap-1.5 mb-4">
-                              <span className={`px-2 py-0.5 text-[10px] font-bold rounded-md ${
-                                item.triase === 'Merah' ? 'bg-rose-100 text-rose-800 border border-rose-200' :
-                                item.triase === 'Kuning' ? 'bg-amber-100 text-amber-800 border border-amber-200' : 
-                                'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                              }`}>
-                                Triase: {item.triase || 'Hijau'}
-                              </span>
-
-                              <span className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-slate-100 text-slate-700 border border-slate-200">
-                                {item.penjaminan || 'Umum'}
-                              </span>
-
-                              <span className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-sky-100 text-sky-800 border border-sky-200">
-                                {item.metodeBayar}
-                              </span>
-                            </div>
-
-                            {/* SUMMARY ITEM & PETUGAS */}
-                            <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100 text-[11px] space-y-1 mb-4">
-                              <div className="flex justify-between text-slate-600">
-                                <span>Jumlah Tindakan:</span>
-                                <span className="font-bold text-slate-800">{totalQty} Item</span>
-                              </div>
-                              <div className="flex justify-between text-slate-600">
-                                <span>Petugas Kasir:</span>
-                                <span className="font-bold text-slate-800">{item.kasirNama || activeCashier.nama}</span>
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* FOOTER KARTU & ACTION BUTTONS */}
-                          <div className="border-t border-slate-100 pt-3 mt-2">
-                            <div className="flex justify-between items-center mb-3">
-                              <span className="text-[10px] font-extrabold uppercase text-slate-400">Total Tarif</span>
-                              <span className="text-base font-black font-mono text-emerald-600">{formatRupiah(item.totalTarif)}</span>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-2">
-                              <button 
-                                onClick={() => setSelectedDetailRecord(item)}
-                                className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer"
+                        <tr key={item.id} className="hover:bg-slate-50 transition">
+                          <td className="p-3 font-bold text-[10px] text-sky-700 uppercase">{item.kategori}</td>
+                          <td className="p-3 font-bold text-slate-800">{item.nama}</td>
+                          <td className="p-3 text-right text-slate-600">{formatRupiah(item.tarif)}</td>
+                          <td className="p-3 text-center">
+                            <div className="flex items-center justify-center space-x-1">
+                              <button
+                                onClick={() => handleQtyChange(item.id, qty - 1)}
+                                className="w-7 h-7 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg flex items-center justify-center font-bold transition cursor-pointer"
+                                title="Kurangi"
                               >
-                                <Eye className="w-3.5 h-3.5" />
-                                <span>Rincian</span>
+                                <Minus className="w-3 h-3" />
                               </button>
-
-                              <button 
-                                onClick={() => handlePrintSingleRecord(item)}
-                                className="w-full py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer shadow-sm"
-                                title={`Cetak Formulir A4 untuk ${item.namaPasien}`}
+                              <input 
+                                type="number" 
+                                min="0" 
+                                value={qty === 0 ? '' : qty} 
+                                onChange={(e) => handleQtyChange(item.id, parseInt(e.target.value) || 0)} 
+                                placeholder="0"
+                                className="w-12 p-1 text-center border border-slate-300 rounded-lg text-xs font-bold bg-white focus:ring-2 focus:ring-sky-500"
+                              />
+                              <button
+                                onClick={() => handleQtyChange(item.id, qty + 1)}
+                                className="w-7 h-7 bg-sky-600 hover:bg-sky-500 text-white rounded-lg flex items-center justify-center font-bold transition cursor-pointer shadow-sm"
+                                title="Tambah"
                               >
-                                <Printer className="w-3.5 h-3.5 text-emerald-600" />
-                                <span>Cetak A4 ({item.namaPasien.split(' ')[0]})</span>
+                                <Plus className="w-3 h-3" />
                               </button>
-                            </div>
                           </div>
-
-                        </div>
-                      );
-                    })}
-                  </div>
+                        </td>
+                        <td className="p-3 text-right font-black text-sky-700">
+                          {subtotal > 0 ? formatRupiah(subtotal) : '-'}
+                        </td>
+                      </tr>
+                    );
+                  })
                 ) : (
-                  <div className="bg-slate-50 border border-dashed border-slate-300 rounded-3xl p-12 text-center text-slate-400 font-medium">
-                    {riwayatTagihan.length === 0 
-                      ? 'Belum ada data riwayat tagihan IGD yang diinput. Silakan buat input baru melalui tab Form.' 
-                      : 'Pencarian pasien atau filter tidak ditemukan.'}
-                  </div>
+                  <tr>
+                    <td colSpan={5} className="p-6 text-center text-slate-400">
+                      Tindakan tidak ditemukan.
+                    </td>
+                  </tr>
                 )}
+              </tbody>
+            </table>
+          </div>
 
+          {/* TOTAL KESELURUHAN TARIF & KALKULATOR PEMBAYARAN TUNAI */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8">
+            <div className="bg-slate-900 text-white p-5 rounded-2xl flex flex-col justify-between shadow-lg">
+              <div className="flex items-center space-x-2">
+                <Calculator className="w-6 h-6 text-sky-400" />
+                <div>
+                  <p className="text-xs uppercase tracking-wider text-slate-400 font-bold">Total Biaya Tindakan IGD</p>
+                  <p className="text-sm font-semibold text-slate-200">Akumulasi Seluruh Pemeriksaan</p>
+                </div>
+              </div>
+              <div className="text-2xl sm:text-3xl font-black text-sky-400 tracking-tight font-mono mt-3">
+                {formatRupiah(totalTarif)}
               </div>
             </div>
-          )}
 
-        </main>
-        
-        <KasirFooter />
+            {formData.metodeBayar === 'Tunai / Cash' ? (
+              <div className="bg-emerald-900 text-white p-5 rounded-2xl flex flex-col justify-between shadow-lg">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <Banknote className="w-6 h-6 text-emerald-300" />
+                    <div>
+                      <p className="text-xs uppercase tracking-wider text-emerald-200 font-bold">Kalkulator Pembayaran Tunai</p>
+                      <p className="text-sm font-semibold text-emerald-100">Uang Diterima dari Pasien</p>
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-3 flex items-center gap-3">
+                  <input 
+                    type="number"
+                    value={bayarTunai}
+                    onChange={(e) => setBayarTunai(e.target.value === '' ? '' : Number(e.target.value))}
+                    placeholder="Masukkan nominal uang..."
+                    className="w-full p-2 bg-emerald-950 border border-emerald-600 rounded-xl text-xs font-mono font-bold text-white focus:ring-2 focus:ring-emerald-400"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2 mt-2">
+                  <span className="text-[10px] text-emerald-200 font-bold">Pintasan Uang Pas:</span>
+                  <button
+                    onClick={() => setBayarTunai(totalTarif)}
+                    className="px-2.5 py-1 bg-emerald-800 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-mono font-bold transition cursor-pointer border border-emerald-600"
+                  >
+                    Uang Pas ({formatRupiah(totalTarif)})
+                  </button>
+                </div>
+
+                <div className="flex justify-between items-center mt-3 pt-2 border-t border-emerald-700 text-xs">
+                  <span className="text-emerald-200 font-bold">Kembalian:</span>
+                  <span className="font-mono font-black text-base text-emerald-300">{formatRupiah(kembalianTunai)}</span>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-sky-900 text-white p-5 rounded-2xl flex flex-col justify-between shadow-lg">
+                <div className="flex items-center space-x-2">
+                  <Banknote className="w-6 h-6 text-sky-300" />
+                  <div>
+                    <p className="text-xs uppercase tracking-wider text-sky-200 font-bold">Metode QRIS / Online</p>
+                    <p className="text-sm font-semibold text-sky-100">Verifikasi Langsung ke Rekening RSUD</p>
+                  </div>
+                </div>
+                <p className="text-xs text-sky-200 mt-4">Pastikan bukti transfer/QRIS telah diverifikasi sebelum menyimpan.</p>
+              </div>
+            )}
+        </div>
+
+          {/* TANDA TANGAN */}
+          <div className="grid grid-cols-2 gap-8 text-center text-xs font-medium text-slate-700 mb-8 pt-4">
+            <div>
+              <p className="mb-16">Pasien / PJ Pasien / Keluarga</p>
+              <p className="font-bold border-b border-slate-400 pb-1 inline-block min-w-[180px] uppercase">
+                ({formData.nama || '...........................................'})
+              </p>
+            </div>
+            <div>
+              <p className="mb-1">Kerinci, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
+              <p className="mb-14">Petugas Kasir (Penanggung Jawab)</p>
+              <p className="font-bold border-b border-slate-400 pb-1 inline-block min-w-[180px] uppercase">
+                ( {activeCashier.nama} )
+              </p>
+            </div>
+          </div>
+
+          {/* TOMBOL AKSI */}
+          <div className="flex flex-col sm:flex-row items-center justify-between border-t border-slate-200 pt-4 gap-3">
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <button 
+                onClick={handleResetForm}
+                className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition cursor-pointer"
+              >
+                Reset Form
+              </button>
+              <button
+                onClick={copySummaryToClipboard}
+                className="px-3 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                title="Salin ringkasan tagihan ke clipboard"
+              >
+                <Copy className="w-3.5 h-3.5" /> Salin Teks
+              </button>
+            </div>
+            <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto justify-end">
+              <button 
+                onClick={() => setShowThermalModal(true)}
+                className="w-full sm:w-auto px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-300 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Receipt className="w-4 h-4 text-indigo-600" /> Struk Thermal
+              </button>
+              <button 
+                onClick={() => setShowPreviewModal(true)}
+                className="w-full sm:w-auto px-4 py-2.5 bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-300 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Eye className="w-4 h-4 text-sky-600" /> Pratinjau Struk
+              </button>
+              <button 
+                onClick={handlePrint}
+                className="w-full sm:w-auto px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 shadow cursor-pointer"
+              >
+                <Printer className="w-4 h-4 text-sky-400" /> Cetak Formulir
+              </button>
+              <button 
+                onClick={handleSaveAndSend}
+                disabled={isSubmitting}
+                className="w-full sm:w-auto px-6 py-2.5 bg-sky-700 hover:bg-sky-600 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 shadow cursor-pointer disabled:opacity-50"
+              >
+                {isSubmitting ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Menyimpan ke Supabase...</span>
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-4 h-4" />
+                    <span>Simpan &amp; Kirim (Ctrl+S)</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
+        </div>
+
+        {/* FLOATING MOBILE TOTAL BAR */}
+        {Object.keys(selectedItems).length > 0 && activeTab === 'form' && (
+          <div className="fixed bottom-0 left-0 right-0 z-40 bg-slate-900/95 backdrop-blur text-white p-3 px-4 flex items-center justify-between shadow-2xl lg:hidden border-t border-slate-700">
+            <div>
+              <p className="text-[10px] text-slate-400 uppercase font-bold">Total ({Object.values(selectedItems).reduce((a,b)=>a+b,0)} Tindakan):</p>
+              <p className="text-sm font-black font-mono text-sky-400">{formatRupiah(totalTarif)}</p>
+            </div>
+            <button
+              onClick={handleSaveAndSend}
+              disabled={isSubmitting}
+              className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold shadow cursor-pointer disabled:opacity-50"
+            >
+              {isSubmitting ? 'Menyimpan...' : 'Simpan Tagihan'}
+            </button>
+          </div>
+        )}
+      </div>
+      )}
+
+      {/* TAB 2: DAFTAR RIWAYAT & KARTU TAGIHAN (UPDATED: MODEL KARTU GRID) */}
+      {activeTab === 'riwayat' && (
+        <div className="space-y-6">
+         
+        {/* KARTU STATISTIK KEUANGAN & TRIASE */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="bg-slate-900 text-white p-5 rounded-3xl shadow-xl flex flex-col justify-between">
+            <div>
+              <p className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">Total Filter ({filteredRiwayat.length} Pasien)</p>
+              <p className="text-xl sm:text-2xl font-black font-mono text-emerald-400 mt-1">{formatRupiah(totalNominalFilter)}</p>
+            </div>
+            <p className="text-[10px] text-slate-400 mt-3">Pendapatan keseluruhan</p>
+          </div>
+
+          <div className="bg-rose-900 text-white p-5 rounded-3xl shadow-xl flex flex-col justify-between">
+            <div>
+              <p className="text-[10px] font-extrabold uppercase tracking-widest text-rose-200">Triase Merah (Resusitasi)</p>
+              <p className="text-xl sm:text-2xl font-black font-mono text-white mt-1">
+                {formatRupiah(filteredRiwayat.filter(i => i.triase === 'Merah').reduce((s, i) => s + i.totalTarif, 0))}
+              </p>
+            </div>
+            <p className="text-[10px] text-rose-200 mt-3">{filteredRiwayat.filter(i => i.triase === 'Merah').length} Kasus</p>
+          </div>
+
+          <div className="bg-amber-800 text-white p-5 rounded-3xl shadow-xl flex flex-col justify-between">
+            <div>
+              <p className="text-[10px] font-extrabold uppercase tracking-widest text-amber-200">Triase Kuning (Darurat)</p>
+              <p className="text-xl sm:text-2xl font-black font-mono text-white mt-1">
+                {formatRupiah(filteredRiwayat.filter(i => i.triase === 'Kuning').reduce((s, i) => s + i.totalTarif, 0))}
+              </p>
+            </div>
+            <p className="text-[10px] text-amber-200 mt-3">{filteredRiwayat.filter(i => i.triase === 'Kuning').length} Kasus</p>
+          </div>
+
+          <div className="bg-emerald-800 text-white p-5 rounded-3xl shadow-xl flex flex-col justify-between">
+          <div>
+              <p className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-200">Triase Hijau (Ringan)</p>
+              <p className="text-xl sm:text-2xl font-black font-mono text-white mt-1">
+                {formatRupiah(filteredRiwayat.filter(i => i.triase === 'Hijau').reduce((s, i) => s + i.totalTarif, 0))}
+              </p>
+            </div>
+            <p className="text-[10px] text-emerald-200 mt-3">{filteredRiwayat.filter(i => i.triase === 'Hijau').length} Kasus</p>
+          </div>
+        </div>
+
+        {/* PANEL FILTER & KONTROL MASAL */}
+        <div className="bg-white text-slate-800 shadow-2xl rounded-3xl p-6 sm:p-8 border border-slate-200 space-y-6">
+          
+          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 border-b border-slate-200 pb-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                onClick={toggleSelectAllCards}
+                className="flex items-center gap-2 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition cursor-pointer border border-slate-300"
+              >
+                {selectedCardIds.length === filteredRiwayat.length && filteredRiwayat.length > 0 ? (
+                  <CheckSquare className="w-4 h-4 text-emerald-600" />
+                ) : (
+                  <Square className="w-4 h-4 text-slate-400" />
+                )}
+                <span>Pilih Semua ({selectedCardIds.length}/{filteredRiwayat.length})</span>
+              </button>
+
+              {selectedCardIds.length > 0 && (
+                <button
+                  onClick={handlePrintBatchSelected}
+                  className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition shadow cursor-pointer animate-pulse"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>Cetak Terpilih ({selectedCardIds.length})</span>
+                </button>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={handleDownloadBackup}
+                className="flex items-center gap-2 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-xl text-xs font-bold transition cursor-pointer shadow-sm"
+                title="Unduh file JSON cadangan data riwayat"
+              >
+                <Download className="w-4 h-4 text-slate-600" />
+                <span>Backup</span>
+              </button>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="flex items-center gap-2 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-xl text-xs font-bold transition cursor-pointer shadow-sm"
+                title="Pulihkan data dari file JSON"
+              >
+                <Upload className="w-4 h-4 text-slate-600" />
+                <span>Restore</span>
+              </button>
+              <button
+                onClick={handlePrintAllRecap}
+                className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition cursor-pointer shadow-sm"
+              >
+                <Printer className="w-4 h-4" />
+                <span>Cetak Rekap Semua ({filteredRiwayat.length})</span>
+              </button>
+              <button
+                onClick={handlePrintShiftRecap}
+                className="flex items-center gap-2 px-4 py-2 bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-300 rounded-xl text-xs font-bold transition cursor-pointer shadow-sm"
+              >
+                <Printer className="w-4 h-4" />
+                <span>Rekap Shift</span>
+              </button>
+              <button
+                onClick={handleExportExcel}
+                className="flex items-center gap-2 px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-bold transition cursor-pointer shadow-sm"
+              >
+                <FileSpreadsheet className="w-4 h-4" />
+                <span>Excel ({filteredRiwayat.length})</span>
+              </button>
+              <button
+                onClick={() => setActiveTab('form')}
+                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition shadow cursor-pointer flex-shrink-0"
+              >
+                + Input Baru
+              </button>
+            </div>
+          </div>
+
+          {/* FILTER BAR */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+            <div className="relative">
+              <Search className="absolute left-3 top-3 w-3.5 h-3.5 text-slate-400" />
+              <input 
+                type="text" 
+                value={riwayatSearchTerm}
+                onChange={(e) => setRiwayatSearchTerm(e.target.value)}
+                placeholder="Cari RM / Nama Pasien..." 
+                className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+
+            <div>
+              <select
+                value={filterStatusBayar}
+                onChange={(e) => setFilterStatusBayar(e.target.value)}
+                className="w-full p-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-emerald-500"
+              >
+                <option value="Semua Status Bayar">Semua Status Bayar</option>
+                <option value="Lunas">Lunas</option>
+                <option value="Belum Bayar">Belum Bayar</option>
+              </select>
+            </div>
+
+            <div>
+              <select
+                value={filterPenjaminan}
+                onChange={(e) => setFilterPenjaminan(e.target.value)}
+                className="w-full p-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-emerald-500"
+              >
+                <option value="Semua Penjaminan">Semua Penjaminan</option>
+                <option value="Umum">Umum / Mandiri</option>
+                <option value="BPJS">BPJS Kesehatan</option>
+              </select>
+            </div>
+
+            <div>
+              <select
+                value={filterTriase}
+                onChange={(e) => setFilterTriase(e.target.value)}
+                className="w-full p-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-emerald-500"
+              >
+                <option value="Semua Triase">Semua Triase</option>
+                <option value="Merah">Triase Merah</option>
+                <option value="Kuning">Triase Kuning</option>
+                <option value="Hijau">Triase Hijau</option>
+              </select>
+            </div>
+
+            <div className="relative">
+              <Calendar className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-400" />
+              <input 
+                type="text" 
+                value={filterTanggal}
+                onChange={(e) => setFilterTanggal(e.target.value)}
+                placeholder="dd/mm/yyyy" 
+                className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+          </div>
+
+          {/* DAFTAR RIWAYAT - TAMPILAN KARTU GRID (CARD VIEW MODEL) */}
+          {filteredRiwayat.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              {filteredRiwayat.map((item) => {
+                const isSelected = selectedCardIds.includes(item.id);
+                const totalQty = Object.values(item.items).reduce((a, b) => a + b, 0);
+
+                return (
+                  <div 
+                    key={item.id} 
+                    className={`relative bg-white rounded-3xl border transition-all duration-200 p-5 shadow-sm hover:shadow-xl flex flex-col justify-between ${
+                      isSelected ? 'border-indigo-500 ring-2 ring-indigo-500/20 bg-indigo-50/10' : 'border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    {/* HEADER KARTU */}
+                    <div>
+                      <div className="flex items-start justify-between gap-2 mb-3 border-b border-slate-100 pb-3">
+                        <div className="flex items-center gap-2.5">
+                          <button
+                            onClick={() => toggleSelectCard(item.id)}
+                            className="text-slate-400 hover:text-indigo-600 transition cursor-pointer"
+                          >
+                            {isSelected ? (
+                              <CheckSquare className="w-5 h-5 text-indigo-600" />
+                            ) : (
+                              <Square className="w-5 h-5" />
+                            )}
+                          </button>
+                          <div>
+                            <span className="font-mono font-black text-xs text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100">
+                              {item.id}
+                          </span>
+                            <p className="text-[10px] text-slate-400 mt-0.5 font-medium">{item.tanggal}</p>
+                          </div>
+                        </div>
+
+                        <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase ${
+                          item.status === 'Disetujui' ? 'bg-emerald-100 text-emerald-800' : 
+                          item.status === 'Direvisi' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'
+                        }`}>
+                          {item.status}
+                        </span>
+                    </div>
+
+                    {/* BIODATA PASIEN */}
+                    <div className="space-y-1 mb-4">
+                      <div className="flex justify-between items-baseline">
+                        <h4 className="text-sm font-black text-slate-900 truncate max-w-[180px]" title={item.namaPasien}>
+                          {item.namaPasien}
+                        </h4>
+                        <span className="text-[11px] font-bold text-sky-700 font-mono bg-sky-50 px-2 py-0.5 rounded border border-sky-100">
+                          RM: {item.noRm}
+                        </span>
+                      </div>
+
+                      <p className="text-[11px] text-slate-500 truncate" title={item.alamat || '-'}>
+                        <span className="font-medium">Alamat:</span> {item.alamat || '-'}
+                      </p>
+                      <p className="text-[11px] text-slate-500 truncate">
+                        <span className="font-medium">Dokter:</span> {item.dokter || 'Dokter Jaga IGD'}
+                      </p>
+                    </div>
+
+                    {/* BADGES METODE & TRIASE */}
+                    <div className="flex flex-wrap gap-1.5 mb-4">
+                      <span className={`px-2 py-0.5 text-[10px] font-bold rounded-md ${
+                        item.triase === 'Merah' ? 'bg-rose-100 text-rose-800 border border-rose-200' :
+                        item.triase === 'Kuning' ? 'bg-amber-100 text-amber-800 border border-amber-200' : 
+                        'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                      }`}>
+                        Triase: {item.triase || 'Hijau'}
+                      </span>
+
+                      <span className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-slate-100 text-slate-700 border border-slate-200">
+                        {item.penjaminan || 'Umum'}
+                      </span>
+
+                      <span className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-sky-100 text-sky-800 border border-sky-200">
+                        {item.metodeBayar}
+                      </span>
+                  </div>
+
+                  {/* SUMMARY ITEM & PETUGAS */}
+                  <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100 text-[11px] space-y-1 mb-4">
+                    <div className="flex justify-between text-slate-600">
+                      <span>Jumlah Tindakan:</span>
+                      <span className="font-bold text-slate-800">{totalQty} Item</span>
+                    </div>
+                    <div className="flex justify-between text-slate-600">
+                      <span>Petugas Kasir:</span>
+                      <span className="font-bold text-slate-800">{item.kasirNama || activeCashier.nama}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* FOOTER KARTU & ACTION BUTTONS */}
+                <div className="border-t border-slate-100 pt-3 mt-2">
+                  <div className="flex justify-between items-center mb-3">
+                    <span className="text-[10px] font-extrabold uppercase text-slate-400">Total Tarif</span>
+                    <span className="text-base font-black font-mono text-emerald-600">{formatRupiah(item.totalTarif)}</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <button 
+                      onClick={() => setSelectedDetailRecord(item)}
+                      className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                      <span>Rincian</span>
+                    </button>
+
+                    <button 
+                      onClick={() => handlePrintSingleRecord(item)}
+                      className="w-full py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer shadow-sm"
+                      title={`Cetak Formulir A4 untuk ${item.namaPasien}`}
+                    >
+                      <Printer className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Cetak A4 ({item.namaPasien.split(' ')[0]})</span>
+                    </button>
+                </div>
+              </div>
+
+              </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="bg-slate-50 border border-dashed border-slate-300 rounded-3xl p-12 text-center text-slate-400 font-medium">
+            {riwayatTagihan.length === 0 
+              ? 'Belum ada data riwayat tagihan IGD yang diinput. Silakan buat input baru melalui tab Form.' 
+              : 'Pencarian pasien atau filter tidak ditemukan.'}
+          </div>
+        )}
+
+      </div>
+    </div>
+    )}
+
+    </main>
+      
+    <KasirFooter />
+  </div>
+
+  {/* ========================================================================= */}
+  {/* TAMPILAN KHUSUS CETAK RESMI (PRINT-ONLY LAYOUT) - DIRAPIKAN & PROFESIONAL */}
+  {/* ========================================================================= */}
+  {!showShiftRecapPrint && !showBatchPrint && !showAllRecapPrint ? (
+    /* 1. CETAK A4 PERINCIAN BIAYA SATUAN PASIEN */
+    <div className="hidden print:block bg-white text-black p-8 font-sans max-w-[210mm] mx-auto">
+      <div className="flex items-center justify-between border-b-2 border-black pb-4 mb-6">
+        <div className="w-16 h-16 flex items-center justify-center">
+          <img src="/logo-kerinci.png" alt="Pemkab Kerinci" className="max-h-full max-w-full object-contain" />
+        </div>
+        <div className="text-center px-2 flex-grow">
+          <p className="text-xs font-bold uppercase tracking-wider">PEMERINTAH KABUPATEN KERINCI</p>
+          <p className="text-xs font-bold uppercase tracking-wider">DINAS KESEHATAN</p>
+          <h1 className="text-xl font-black uppercase tracking-wide mt-0.5">RSUD BUKIT KERMAN</h1>
+          <p className="text-[10px]">Desa Pondok, Kecamatan Bukit Kerman, Kode Pos: 37176</p>
+          <p className="text-[10px]">Website: https://rsudbukitkerman.kerincikab.go.id | e-mail: rsubukitkerman@gmail.com</p>
+        </div>
+        <div className="w-16 h-16 flex items-center justify-center">
+          <img src="/logo-rsud.jpeg" alt="RSUD Bukit Kerman" className="max-h-full max-w-full object-contain" />
+        </div>
       </div>
 
-      {/* ========================================================================= */}
-      {/* TAMPILAN KHUSUS CETAK RESMI (PRINT-ONLY LAYOUT)                           */}
-      {/* ========================================================================= */}
-      {!showShiftRecapPrint && !showBatchPrint ? (
-        /* 1. CETAK A4 PERINCIAN BIAYA SATUAN PASIEN (BISA DARI FORM ATAU DARI KARTU RIWAYAT) */
-        <div className="hidden print:block bg-white text-black p-6 font-sans">
-          <div className="flex items-center justify-between border-b-2 border-black pb-4 mb-6">
-            <div className="w-16 h-16 flex items-center justify-center">
-              <img src="/logo-kerinci.png" alt="Pemkab Kerinci" className="max-h-full max-w-full object-contain" />
-            </div>
-            <div className="text-center px-2 flex-grow">
-              <p className="text-[11px] font-bold uppercase tracking-wider">PEMERINTAH KABUPATEN KERINCI</p>
-              <p className="text-[11px] font-bold uppercase tracking-wider">DINAS KESEHATAN</p>
-              <h1 className="text-lg font-black uppercase tracking-wide mt-0.5">RSUD BUKIT KERMAN</h1>
-              <p className="text-[9px]">Desa Pondok, Kecamatan Bukit Kerman, Kode Pos: 37176</p>
-              <p className="text-[9px]">Website: https://rsudbukitkerman.kerincikab.go.id | e-mail: rsubukitkerman@gmail.com</p>
-            </div>
-            <div className="w-16 h-16 flex items-center justify-center">
-              <img src="/logo-rsud.jpeg" alt="RSUD Bukit Kerman" className="max-h-full max-w-full object-contain" />
-            </div>
-          </div>
+      <div className="text-center mb-6">
+        <div className="inline-block border border-black px-6 py-1.5 text-xs font-black uppercase tracking-wider">
+          SURAT PERINCIAN BIAYA PELAYANAN INSTALASI GAWAT DARURAT (IGD)
+        </div>
+      </div>
 
-          <div className="text-center mb-6">
-            <div className="inline-block border border-black px-6 py-1 text-xs font-black uppercase tracking-wider">
-              SURAT PERINCIAN BIAYA PELAYANAN IGD
-            </div>
-          </div>
+      {/* DATA PASIEN PRINT FORMAT */}
+      <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs mb-6 border border-black p-4 bg-slate-50/20">
+        <div><span className="font-bold">No. Rekam Medis (RM):</span> {activePrintTarget.noRm || '-'}</div>
+        <div><span className="font-bold">Tanggal Pemeriksaan:</span> {activePrintTarget.tanggal || '-'}</div>
+        <div><span className="font-bold">Nama Pasien:</span> {activePrintTarget.namaPasien || '-'}</div>
+        <div><span className="font-bold">Dokter Pemeriksa:</span> {activePrintTarget.dokter || 'Dokter Jaga IGD'}</div>
+        <div><span className="font-bold">Tempat, Tgl Lahir:</span> {activePrintTarget.ttl || '-'}</div>
+        <div><span className="font-bold">Triase / Penjaminan:</span> {activePrintTarget.triase} ({activePrintTarget.penjaminan})</div>
+        <div className="col-span-2"><span className="font-bold">Alamat:</span> {activePrintTarget.alamat || '-'}</div>
+      </div>
 
-          {/* DATA PASIEN PRINT FORMAT */}
-          <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs mb-6 border border-black p-4">
-            <div><span className="font-bold">No. Rekam Medis (RM):</span> {activePrintTarget.noRm || '-'}</div>
-            <div><span className="font-bold">Tanggal Pemeriksaan:</span> {activePrintTarget.tanggal || '-'}</div>
-            <div><span className="font-bold">Nama Pasien:</span> {activePrintTarget.namaPasien || '-'}</div>
-            <div><span className="font-bold">Dokter Pemeriksa:</span> {activePrintTarget.dokter || 'Dokter Jaga IGD'}</div>
-            <div><span className="font-bold">Tempat, Tgl Lahir:</span> {activePrintTarget.ttl || '-'}</div>
-            <div><span className="font-bold">Triase / Penjaminan:</span> {activePrintTarget.triase} ({activePrintTarget.penjaminan})</div>
-            <div className="col-span-2"><span className="font-bold">Alamat:</span> {activePrintTarget.alamat || '-'}</div>
-          </div>
+      {/* TABEL ITEM TINDAKAN PRINT FORMAT */}
+      <table className="w-full text-left border-collapse text-xs mb-6 border border-black">
+        <thead>
+          <tr className="border-b-2 border-black bg-slate-100">
+            <th className="py-2.5 px-3 border-r border-black">No</th>
+            <th className="py-2.5 px-3 border-r border-black">Kategori</th>
+            <th className="py-2.5 px-3 border-r border-black">Jenis Tindakan Medis IGD</th>
+            <th className="py-2.5 px-3 border-r border-black text-right">Tarif (Rp)</th>
+            <th className="py-2.5 px-3 border-r border-black text-center">Qty</th>
+            <th className="py-2.5 px-3 text-right">Subtotal</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-black">
+          {Object.entries(activePrintTarget.items || {}).map(([id, qty], index) => {
+            const item = daftarTindakanIGD.find(t => t.id === id);
+            if (!item) return null;
+            const subtotal = qty * item.tarif;
+            return (
+              <tr key={id} className="border-b border-black">
+                <td className="py-2 px-3 border-r border-black">{index + 1}</td>
+                <td className="py-2 px-3 border-r border-black font-bold text-[10px]">{item.kategori}</td>
+                <td className="py-2 px-3 border-r border-black font-bold">{item.nama}</td>
+                <td className="py-2 px-3 border-r border-black text-right">{formatRupiah(item.tarif)}</td>
+                <td className="py-2 px-3 border-r border-black text-center">{qty}</td>
+                <td className="py-2 px-3 text-right font-black">{formatRupiah(subtotal)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
 
-          {/* TABEL ITEM TINDAKAN PRINT FORMAT */}
-          <table className="w-full text-left border-collapse text-xs mb-6">
-            <thead>
-              <tr className="border-b-2 border-black">
-                <th className="py-2 px-2">No</th>
-                <th className="py-2 px-2">Kategori</th>
-                <th className="py-2 px-2">Jenis Tindakan Medis IGD</th>
-                <th className="py-2 px-2 text-right">Tarif (Rp)</th>
-                <th className="py-2 px-2 text-center">Qty</th>
-                <th className="py-2 px-2 text-right">Subtotal</th>
+      {/* TOTAL PRINT FORMAT */}
+      <div className="flex justify-between items-center border-2 border-black p-3 mb-8 text-sm font-black bg-slate-50">
+        <span>TOTAL KESELURUHAN BIAYA TINDAKAN IGD:</span>
+        <span className="text-base font-mono">{formatRupiah(activePrintTarget.totalTarif)}</span>
+      </div>
+
+      {/* TTD PRINT FORMAT */}
+      <div className="grid grid-cols-2 gap-8 text-center text-xs mt-10">
+        <div>
+          <p className="mb-20">Pasien / Keluarga Pasien</p>
+          <p className="font-bold underline uppercase">({activePrintTarget.namaPasien || '...........................................'})</p>
+        </div>
+        <div>
+          <p className="mb-1">Kerinci, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
+          <p className="mb-20">Petugas Kasir IGD</p>
+          <p className="font-bold underline uppercase">({activePrintTarget.kasirNama || activeCashier.nama})</p>
+        </div>
+      </div>
+    </div>
+  ) : showBatchPrint ? (
+    /* 2. CETAK REKAP PASIEN TERPILIH (BATCH MASS PRINT) */
+    <div className="hidden print:block bg-white text-black p-8 font-sans max-w-[210mm] mx-auto">
+      <div className="flex items-center justify-between border-b-2 border-black pb-4 mb-6">
+        <div className="w-16 h-16 flex items-center justify-center">
+          <img src="/logo-kerinci.png" alt="Pemkab Kerinci" className="max-h-full max-w-full object-contain" />
+        </div>
+        <div className="text-center px-2 flex-grow">
+          <p className="text-xs font-bold uppercase tracking-wider">PEMERINTAH KABUPATEN KERINCI</p>
+          <p className="text-xs font-bold uppercase tracking-wider">DINAS KESEHATAN - RSUD BUKIT KERMAN</p>
+          <h1 className="text-lg font-black uppercase tracking-wide mt-0.5">REKAPITULASI DAFTAR TRANSAKSI PASIEN IGD TERPILIH</h1>
+          <p className="text-[10px]">Dicetak Tanggal: {new Date().toLocaleDateString('id-ID')} | Jumlah Terpilih: {selectedBatchRecords.length} Pasien</p>
+        </div>
+        <div className="w-16 h-16 flex items-center justify-center">
+          <img src="/logo-rsud.jpeg" alt="RSUD Bukit Kerman" className="max-h-full max-w-full object-contain" />
+        </div>
+      </div>
+
+      <table className="w-full text-left border-collapse text-xs mb-6 border border-black">
+        <thead>
+          <tr className="border-b-2 border-black bg-slate-100">
+            <th className="py-2.5 px-3 border-r border-black">No</th>
+            <th className="py-2.5 px-3 border-r border-black">ID / Tanggal</th>
+            <th className="py-2.5 px-3 border-r border-black">No RM / Nama Pasien</th>
+            <th className="py-2.5 px-3 border-r border-black">Triase &amp; Penjaminan</th>
+            <th className="py-2.5 px-3 border-r border-black">Metode Bayar</th>
+            <th className="py-2.5 px-3 text-right">Total Biaya</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-black">
+          {selectedBatchRecords.map((item, idx) => (
+            <tr key={item.id} className="border-b border-black">
+              <td className="py-2 px-3 border-r border-black">{idx + 1}</td>
+              <td className="py-2 px-3 border-r border-black font-mono">{item.id}<br/><span className="text-[10px]">{item.tanggal}</span></td>
+              <td className="py-2 px-3 border-r border-black font-bold">{item.namaPasien}<br/><span className="text-[10px] font-normal">RM: {item.noRm}</span></td>
+              <td className="py-2 px-3 border-r border-black">Triase: {item.triase}<br/>({item.penjaminan})</td>
+              <td className="py-2 px-3 border-r border-black">{item.metodeBayar}</td>
+              <td className="py-2 px-3 text-right font-black">{formatRupiah(item.totalTarif)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <div className="flex justify-between items-center border-2 border-black p-3 mb-8 text-sm font-black bg-slate-50">
+        <span>TOTAL BIAYA KOLEKTIF PASIEN TERPILIH ({selectedBatchRecords.length} PASIEN):</span>
+        <span className="text-base font-mono">{formatRupiah(selectedBatchRecords.reduce((s, i) => s + i.totalTarif, 0))}</span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-8 text-center text-xs mt-10">
+        <div>
+          <p className="mb-20">Mengetahui,<br/>Kepala Ruangan IGD</p>
+          <p className="font-bold underline uppercase">( ............................................ )</p>
+        </div>
+        <div>
+          <p className="mb-1">Kerinci, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
+          <p className="mb-20">Petugas Kasir IGD</p>
+          <p className="font-bold underline uppercase">({activeCashier.nama})</p>
+        </div>
+      </div>
+    </div>
+  ) : showAllRecapPrint ? (
+    /* 3. CETAK REKAP SEMUA / FILTERED LIST */
+    <div className="hidden print:block bg-white text-black p-8 font-sans max-w-[210mm] mx-auto">
+      <div className="flex items-center justify-between border-b-2 border-black pb-4 mb-6">
+        <div className="w-16 h-16 flex items-center justify-center">
+          <img src="/logo-kerinci.png" alt="Pemkab Kerinci" className="max-h-full max-w-full object-contain" />
+        </div>
+        <div className="text-center px-2 flex-grow">
+          <p className="text-xs font-bold uppercase tracking-wider">PEMERINTAH KABUPATEN KERINCI</p>
+          <p className="text-xs font-bold uppercase tracking-wider">DINAS KESEHATAN - RSUD BUKIT KERMAN</p>
+          <h1 className="text-lg font-black uppercase tracking-wide mt-0.5">REKAPITULASI KESELURUHAN DATA TRANSAKSI IGD</h1>
+          <p className="text-[10px]">Dicetak Tanggal: {new Date().toLocaleDateString('id-ID')} | Total Filter: {filteredRiwayat.length} Pasien</p>
+        </div>
+        <div className="w-16 h-16 flex items-center justify-center">
+          <img src="/logo-rsud.jpeg" alt="RSUD Bukit Kerman" className="max-h-full max-w-full object-contain" />
+        </div>
+      </div>
+
+      <table className="w-full text-left border-collapse text-xs mb-6 border border-black">
+        <thead>
+          <tr className="border-b-2 border-black bg-slate-100">
+            <th className="py-2.5 px-3 border-r border-black">No</th>
+            <th className="py-2.5 px-3 border-r border-black">ID / Tanggal</th>
+            <th className="py-2.5 px-3 border-r border-black">No RM / Nama Pasien</th>
+            <th className="py-2.5 px-3 border-r border-black">Triase &amp; Pembayaran</th>
+            <th className="py-2.5 px-3 text-right">Tarif (Rp)</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-black">
+          {filteredRiwayat.map((item, idx) => (
+            <tr key={item.id} className="border-b border-black">
+              <td className="py-2 px-3 border-r border-black">{idx + 1}</td>
+              <td className="py-2 px-3 border-r border-black font-mono">{item.id}<br/><span className="text-[10px]">{item.tanggal}</span></td>
+              <td className="py-2 px-3 border-r border-black font-bold">{item.namaPasien}<br/><span className="text-[10px] font-normal">RM: {item.noRm}</span></td>
+              <td className="py-2 px-3 border-r border-black">Triase: {item.triase || 'Hijau'} | {item.metodeBayar}</td>
+              <td className="py-2 px-3 text-right font-black">{formatRupiah(item.totalTarif)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <div className="flex justify-between items-center border-2 border-black p-3 mb-8 text-sm font-black bg-slate-50">
+        <span>TOTAL PENDAPATAN KESELURUHAN ({filteredRiwayat.length} PASIEN):</span>
+        <span className="text-base font-mono">{formatRupiah(totalNominalFilter)}</span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-8 text-center text-xs mt-10">
+        <div>
+          <p className="mb-20">Mengetahui,<br/>Bendahara Penerimaan RSUD</p>
+          <p className="font-bold underline uppercase">( ............................................ )</p>
+        </div>
+        <div>
+          <p className="mb-1">Kerinci, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
+          <p className="mb-20">Petugas Kasir IGD</p>
+          <p className="font-bold underline uppercase">({activeCashier.nama})</p>
+        </div>
+      </div>
+    </div>
+  ) : (
+    /* 4. PRINT LAYOUT KHUSUS REKAP SHIFT KEUANGAN */
+    <div className="hidden print:block bg-white text-black p-8 font-sans max-w-[210mm] mx-auto">
+      <div className="flex items-center justify-between border-b-2 border-black pb-4 mb-6">
+        <div className="w-16 h-16 flex items-center justify-center">
+          <img src="/logo-kerinci.png" alt="Pemkab Kerinci" className="max-h-full max-w-full object-contain" />
+        </div>
+        <div className="text-center px-2 flex-grow">
+          <p className="text-xs font-bold uppercase tracking-wider">PEMERINTAH KABUPATEN KERINCI</p>
+          <p className="text-xs font-bold uppercase tracking-wider">DINAS KESEHATAN - RSUD BUKIT KERMAN</p>
+          <h1 className="text-lg font-black uppercase tracking-wide mt-0.5">LAPORAN REKAPITULASI SHIFT KASIR IGD</h1>
+          <p className="text-[10px]">Periode Laporan Sesi Shift Aktif Tanggal: {new Date().toLocaleDateString('id-ID')}</p>
+        </div>
+        <div className="w-16 h-16 flex items-center justify-center">
+          <img src="/logo-rsud.jpeg" alt="RSUD Bukit Kerman" className="max-h-full max-w-full object-contain" />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4 text-xs mb-6 border border-black p-4 bg-slate-50/20">
+        <div><span className="font-bold">Nama Petugas Kasir:</span> {activeCashier.nama} (ID: {activeCashier.id})</div>
+        <div><span className="font-bold">Total Pasien Terlayani:</span> {filteredRiwayat.length} Orang</div>
+        <div><span className="font-bold">Penerimaan Tunai (Cash):</span> {formatRupiah(totalTunaiFilter)}</div>
+        <div><span className="font-bold">Penerimaan Online (QRIS):</span> {formatRupiah(totalOnlineFilter)}</div>
+        <div className="col-span-2 border-t border-black pt-2 flex justify-between font-black text-sm">
+          <span>TOTAL AKUMULASI PENDAPATAN SHIFT:</span>
+          <span>{formatRupiah(totalNominalFilter)}</span>
+        </div>
+      </div>
+
+      <table className="w-full text-left border-collapse text-xs mb-6 border border-black">
+        <thead>
+          <tr className="border-b-2 border-black bg-slate-100">
+            <th className="py-2.5 px-3 border-r border-black">No</th>
+            <th className="py-2.5 px-3 border-r border-black">ID Transaksi</th>
+            <th className="py-2.5 px-3 border-r border-black">No RM / Nama Pasien</th>
+            <th className="py-2.5 px-3 border-r border-black">Triase &amp; Pembayaran</th>
+            <th className="py-2.5 px-3 text-right">Tarif (Rp)</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-black">
+          {filteredRiwayat.map((item, idx) => (
+            <tr key={item.id} className="border-b border-black">
+              <td className="py-2 px-3 border-r border-black">{idx + 1}</td>
+              <td className="py-2 px-3 border-r border-black font-mono">{item.id}</td>
+              <td className="py-2 px-3 border-r border-black font-bold">{item.noRm} - {item.namaPasien}</td>
+              <td className="py-2 px-3 border-r border-black">Triase: {item.triase || 'Hijau'} | {item.metodeBayar}</td>
+              <td className="py-2 px-3 text-right font-black">{formatRupiah(item.totalTarif)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <div className="grid grid-cols-2 gap-8 text-center text-xs mt-10">
+        <div>
+          <p className="mb-20">Mengetahui,<br/>Bendahara Penerimaan RSUD</p>
+          <p className="font-bold underline uppercase">( ............................................ )</p>
+        </div>
+        <div>
+          <p className="mb-1">Kerinci, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
+          <p className="mb-20">Petugas Kasir IGD</p>
+          <p className="font-bold underline uppercase">({activeCashier.nama})</p>
+        </div>
+      </div>
+    </div>
+  )}
+
+  {/* MODAL PRATINJAU STRUK (*PREVIEW MODAL*) */}
+  {showPreviewModal && (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 print:hidden">
+      <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200">
+        <div className="flex items-center justify-between border-b border-slate-200 pb-3 mb-4">
+          <h3 className="text-xs font-black uppercase text-slate-900 tracking-wider">Pratinjau Struk / Tagihan IGD</h3>
+          <button onClick={() => setShowPreviewModal(false)} className="p-1.5 hover:bg-slate-100 rounded-full transition cursor-pointer">
+            <X className="w-4 h-4 text-slate-600" />
+          </button>
+        </div>
+        <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 text-xs space-y-2 mb-4 font-mono">
+          <p><span className="font-bold">Pasien:</span> {formData.nama || '(Belum diisi)'}</p>
+          <p><span className="font-bold">No RM:</span> {formData.noRm || '(Belum diisi)'}</p>
+          <p><span className="font-bold">Triase:</span> {formData.triase}</p>
+          <p><span className="font-bold">Metode:</span> {formData.metodeBayar} ({formData.penjaminan})</p>
+          <p><span className="font-bold">Total Biaya:</span> {formatRupiah(totalTarif)}</p>
+          <p><span className="font-bold">Jumlah Item:</span> {Object.keys(selectedItems).length} Tindakan dipilih</p>
+        </div>
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={() => setShowPreviewModal(false)}
+            className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold transition cursor-pointer"
+          >
+            Tutup
+          </button>
+          <button
+            onClick={() => {
+              setShowPreviewModal(false);
+              handlePrint();
+            }}
+            className="px-4 py-2 bg-sky-700 hover:bg-sky-600 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow"
+          >
+            <Printer className="w-3.5 h-3.5" /> Cetak Sekarang
+          </button>
+        </div>
+      </div>
+    </div>
+  )}
+
+  {/* MODAL STRUK THERMAL KASIR (80MM) */}
+  {showThermalModal && (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 print:hidden">
+      <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-200">
+        <div className="flex items-center justify-between border-b border-slate-200 pb-3 mb-4">
+          <h3 className="text-xs font-black uppercase text-slate-900 tracking-wider">Struk Thermal Kasir (80mm)</h3>
+          <button onClick={() => setShowThermalModal(false)} className="p-1.5 hover:bg-slate-100 rounded-full transition cursor-pointer">
+            <X className="w-4 h-4 text-slate-600" />
+          </button>
+        </div>
+
+        <div className="bg-amber-50/50 p-4 rounded-2xl border border-amber-200 font-mono text-[11px] text-slate-900 space-y-1 mb-4 shadow-inner">
+          <div className="text-center font-bold border-b border-dashed border-slate-400 pb-2 mb-2">
+            <p>RSUD BUKIT KERMAN</p>
+            <p className="text-[9px]">INSTALASI GAWAT DARURAT (IGD)</p>
+          </div>
+          <p><span className="font-bold">Tgl:</span> {new Date().toLocaleDateString('id-ID')}</p>
+          <p><span className="font-bold">RM:</span> {formData.noRm || '-'}</p>
+          <p><span className="font-bold">Pasien:</span> {formData.nama || '-'}</p>
+          <p><span className="font-bold">Triase:</span> {formData.triase}</p>
+          <div className="border-t border-dashed border-slate-400 pt-2 my-2">
+            {Object.entries(selectedItems).map(([id, qty]) => {
+              const item = daftarTindakanIGD.find(t => t.id === id);
+              if (!item) return null;
+              return (
+                <div key={id} className="flex justify-between text-[10px]">
+                  <span>{qty}x {item.nama.substring(0, 18)}</span>
+                  <span>{formatRupiah(qty * item.tarif)}</span>
+                </div>
+              );
+            })}
+          </div>
+          <div className="border-t border-dashed border-slate-400 pt-2 flex justify-between font-bold text-xs">
+            <span>TOTAL:</span>
+            <span>{formatRupiah(totalTarif)}</span>
+          </div>
+          <div className="text-center text-[9px] text-slate-500 pt-3 border-t border-dashed border-slate-400 mt-2">
+            <p>Kasir: {activeCashier.nama}</p>
+            <p>TERIMA KASIH &amp; LEKAS SEMBUH</p>
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={() => setShowThermalModal(false)}
+            className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold transition cursor-pointer"
+          >
+            Tutup
+          </button>
+          <button
+            onClick={() => {
+              setShowThermalModal(false);
+              handlePrint();
+            }}
+            className="px-4 py-2 bg-indigo-700 hover:bg-indigo-600 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow"
+          >
+            <Printer className="w-3.5 h-3.5" /> Cetak Thermal
+          </button>
+        </div>
+      </div>
+    </div>
+  )}
+
+  {/* MODAL RINCIAN & STATUS ADMIN */}
+  {selectedDetailRecord && (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 print:hidden">
+      <div className="bg-white rounded-3xl max-w-2xl w-full p-6 sm:p-8 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto">
+        
+        <div className="flex items-center justify-between border-b border-slate-200 pb-4 mb-4">
+          <div>
+            <h3 className="text-sm font-black uppercase text-slate-900">Rincian Tagihan &amp; Status Admin</h3>
+            <p className="text-[11px] text-slate-500 font-mono">ID Transaksi: {selectedDetailRecord.id}</p>
+          </div>
+          <button 
+            onClick={() => setSelectedDetailRecord(null)}
+            className="p-2 hover:bg-slate-100 rounded-full transition cursor-pointer"
+          >
+            <X className="w-5 h-5 text-slate-600" />
+          </button>
+        </div>
+
+        {/* STATUS BANNER */}
+        <div className={`p-4 rounded-2xl mb-5 flex items-center justify-between border ${
+          selectedDetailRecord.status === 'Disetujui' ? 'bg-emerald-50 border-emerald-200 text-emerald-900' :
+          selectedDetailRecord.status === 'Direvisi' ? 'bg-rose-50 border-rose-200 text-rose-900' :
+          'bg-amber-50 border-amber-200 text-amber-900'
+        }`}>
+          <div>
+            <p className="text-[10px] font-extrabold uppercase tracking-wider opacity-80">Status Verifikasi oleh Admin Rumah Sakit</p>
+            <p className="text-sm font-black uppercase mt-0.5">{selectedDetailRecord.status}</p>
+          </div>
+          <span className="text-xs font-bold px-3 py-1 bg-white/80 rounded-full shadow-sm">
+            {selectedDetailRecord.status === 'Disetujui' ? 'Tervalidasi' : 'Dalam Pengecekan'}
+          </span>
+        </div>
+
+        {/* BIODATA PASIEN */}
+        <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 mb-5 space-y-2 text-xs">
+          <div className="grid grid-cols-2 gap-2">
+            <div><span className="text-slate-500 font-medium">No. RM:</span> <span className="font-bold text-slate-900">{selectedDetailRecord.noRm}</span></div>
+            <div><span className="text-slate-500 font-medium">Tanggal:</span> <span className="font-bold text-slate-900">{selectedDetailRecord.tanggal}</span></div>
+            <div><span className="text-slate-500 font-medium">Nama Pasien:</span> <span className="font-bold text-slate-900">{selectedDetailRecord.namaPasien}</span></div>
+            <div><span className="text-slate-500 font-medium">Dokter:</span> <span className="font-bold text-slate-900">{selectedDetailRecord.dokter}</span></div>
+            <div><span className="text-slate-500 font-medium">Triase:</span> <span className="font-bold text-slate-900">{selectedDetailRecord.triase || 'Hijau'}</span></div>
+            <div><span className="text-slate-500 font-medium">Metode Bayar:</span> <span className="font-bold text-slate-900">{selectedDetailRecord.metodeBayar} ({selectedDetailRecord.penjaminan})</span></div>
+            <div className="col-span-2"><span className="text-slate-500 font-medium">Alamat:</span> <span className="font-bold text-slate-900">{selectedDetailRecord.alamat || '-'}</span></div>
+          </div>
+        </div>
+
+        {/* TABEL ITEM RINCIAN */}
+        <h4 className="text-xs font-black uppercase text-slate-900 mb-2">Item Pemeriksaan &amp; Tindakan Medis</h4>
+        <div className="border border-slate-200 rounded-2xl overflow-hidden mb-6">
+          <table className="w-full text-left border-collapse text-xs">
+            <thead className="bg-slate-900 text-white uppercase text-[10px]">
+              <tr>
+                <th className="p-2.5">Nama Tindakan</th>
+                <th className="p-2.5 text-center">Qty</th>
+                <th className="p-2.5 text-right">Tarif</th>
+                <th className="p-2.5 text-right">Subtotal</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-black/30">
-              {Object.entries(activePrintTarget.items || {}).map(([id, qty], index) => {
+            <tbody className="divide-y divide-slate-100">
+              {Object.entries(selectedDetailRecord.items).map(([id, qty]) => {
                 const item = daftarTindakanIGD.find(t => t.id === id);
                 if (!item) return null;
                 const subtotal = qty * item.tarif;
                 return (
-                  <tr key={id}>
-                    <td className="py-1.5 px-2">{index + 1}</td>
-                    <td className="py-1.5 px-2 font-bold text-[10px]">{item.kategori}</td>
-                    <td className="py-1.5 px-2 font-bold">{item.nama}</td>
-                    <td className="py-1.5 px-2 text-right">{formatRupiah(item.tarif)}</td>
-                    <td className="py-1.5 px-2 text-center">{qty}</td>
-                    <td className="py-1.5 px-2 text-right font-black">{formatRupiah(subtotal)}</td>
+                  <tr key={id} className="hover:bg-slate-50">
+                    <td className="p-2.5 font-bold text-slate-800">{item.nama}</td>
+                    <td className="p-2.5 text-center font-bold">{qty}</td>
+                    <td className="p-2.5 text-right text-slate-600">{formatRupiah(item.tarif)}</td>
+                    <td className="p-2.5 text-right font-black text-sky-700">{formatRupiah(subtotal)}</td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
-
-          {/* TOTAL PRINT FORMAT */}
-          <div className="flex justify-between items-center border-t-2 border-black pt-3 mb-8 text-sm font-black">
-            <span>TOTAL KESELURUHAN BIAYA TINDAKAN IGD:</span>
-            <span className="text-base font-mono">{formatRupiah(activePrintTarget.totalTarif)}</span>
-          </div>
-
-          {/* TTD PRINT FORMAT */}
-          <div className="grid grid-cols-2 gap-8 text-center text-xs mt-12">
-            <div>
-              <p className="mb-20">Pasien / Keluarga Pasien</p>
-              <p className="font-bold underline uppercase">({activePrintTarget.namaPasien || '...........................................'})</p>
-            </div>
-            <div>
-              <p className="mb-1">Kerinci, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
-              <p className="mb-20">Petugas Kasir IGD</p>
-              <p className="font-bold underline uppercase">({activePrintTarget.kasirNama || activeCashier.nama})</p>
-            </div>
-          </div>
         </div>
-      ) : showBatchPrint ? (
-        /* 2. CETAK REKAP PASIEN TERPILIH (BATCH MASS PRINT) */
-        <div className="hidden print:block bg-white text-black p-6 font-sans">
-          <div className="flex items-center justify-between border-b-2 border-black pb-4 mb-6">
-            <div className="w-16 h-16 flex items-center justify-center">
-              <img src="/logo-kerinci.png" alt="Pemkab Kerinci" className="max-h-full max-w-full object-contain" />
-            </div>
-            <div className="text-center px-2 flex-grow">
-              <p className="text-[11px] font-bold uppercase tracking-wider">PEMERINTAH KABUPATEN KERINCI</p>
-              <p className="text-[11px] font-bold uppercase tracking-wider">DINAS KESEHATAN - RSUD BUKIT KERMAN</p>
-              <h1 className="text-lg font-black uppercase tracking-wide mt-0.5">REKAPITULASI DAFTAR TRANSAKSI PASIEN IGD TERPILIH</h1>
-              <p className="text-[9px]">Dicetak Tanggal: {new Date().toLocaleDateString('id-ID')} | Jumlah Terpilih: {selectedBatchRecords.length} Pasien</p>
-            </div>
-            <div className="w-16 h-16 flex items-center justify-center">
-              <img src="/logo-rsud.jpeg" alt="RSUD Bukit Kerman" className="max-h-full max-w-full object-contain" />
-            </div>
-          </div>
 
-          <table className="w-full text-left border-collapse text-xs mb-6">
-            <thead>
-              <tr className="border-b-2 border-black">
-                <th className="py-2 px-2">No</th>
-                <th className="py-2 px-2">ID / Tanggal</th>
-                <th className="py-2 px-2">No RM / Nama Pasien</th>
-                <th className="py-2 px-2">Triase &amp; Penjaminan</th>
-                <th className="py-2 px-2">Metode Bayar</th>
-                <th className="py-2 px-2 text-right">Total Biaya</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-black/30">
-              {selectedBatchRecords.map((item, idx) => (
-                <tr key={item.id}>
-                  <td className="py-1.5 px-2">{idx + 1}</td>
-                  <td className="py-1.5 px-2 font-mono">{item.id}<br/><span className="text-[10px]">{item.tanggal}</span></td>
-                  <td className="py-1.5 px-2 font-bold">{item.namaPasien}<br/><span className="text-[10px] font-normal">RM: {item.noRm}</span></td>
-                  <td className="py-1.5 px-2">Triase: {item.triase}<br/>({item.penjaminan})</td>
-                  <td className="py-1.5 px-2">{item.metodeBayar}</td>
-                  <td className="py-1.5 px-2 text-right font-black">{formatRupiah(item.totalTarif)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          <div className="flex justify-between items-center border-t-2 border-black pt-3 mb-8 text-sm font-black">
-            <span>TOTAL BIAYA KOLEKTIF PASIEN TERPILIH:</span>
-            <span className="text-base font-mono">{formatRupiah(selectedBatchRecords.reduce((s, i) => s + i.totalTarif, 0))}</span>
-          </div>
-
-          <div className="grid grid-cols-2 gap-8 text-center text-xs mt-12">
-            <div>
-              <p className="mb-20">Mengetahui,<br/>Kepala Ruangan IGD</p>
-              <p className="font-bold underline uppercase">( ............................................ )</p>
-            </div>
-            <div>
-              <p className="mb-1">Kerinci, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
-              <p className="mb-20">Petugas Kasir IGD</p>
-              <p className="font-bold underline uppercase">({activeCashier.nama})</p>
-            </div>
-          </div>
+        {/* TOTAL */}
+        <div className="flex items-center justify-between bg-slate-900 text-white p-4 rounded-2xl mb-6">
+          <span className="text-xs font-bold uppercase tracking-wider text-slate-300">Total Keseluruhan Biaya</span>
+          <span className="text-lg font-black font-mono text-sky-400">{formatRupiah(selectedDetailRecord.totalTarif)}</span>
         </div>
-      ) : (
-        /* 3. PRINT LAYOUT KHUSUS REKAP SHIFT KEUANGAN */
-        <div className="hidden print:block bg-white text-black p-6 font-sans">
-          <div className="flex items-center justify-between border-b-2 border-black pb-4 mb-6">
-            <div className="w-16 h-16 flex items-center justify-center">
-              <img src="/logo-kerinci.png" alt="Pemkab Kerinci" className="max-h-full max-w-full object-contain" />
-            </div>
-            <div className="text-center px-2 flex-grow">
-              <p className="text-[11px] font-bold uppercase tracking-wider">PEMERINTAH KABUPATEN KERINCI</p>
-              <p className="text-[11px] font-bold uppercase tracking-wider">DINAS KESEHATAN - RSUD BUKIT KERMAN</p>
-              <h1 className="text-lg font-black uppercase tracking-wide mt-0.5">LAPORAN REKAPITULASI SHIFT KASIR IGD</h1>
-              <p className="text-[9px]">Periode Laporan Sesi Shift Aktif Tanggal: {new Date().toLocaleDateString('id-ID')}</p>
-            </div>
-            <div className="w-16 h-16 flex items-center justify-center">
-              <img src="/logo-rsud.jpeg" alt="RSUD Bukit Kerman" className="max-h-full max-w-full object-contain" />
-            </div>
-          </div>
 
-          <div className="grid grid-cols-2 gap-4 text-xs mb-6 border border-black p-4">
-            <div><span className="font-bold">Nama Petugas Kasir:</span> {activeCashier.nama} (ID: {activeCashier.id})</div>
-            <div><span className="font-bold">Total Pasien Terlayani:</span> {filteredRiwayat.length} Orang</div>
-            <div><span className="font-bold">Penerimaan Tunai (Cash):</span> {formatRupiah(totalTunaiFilter)}</div>
-            <div><span className="font-bold">Penerimaan Online (QRIS):</span> {formatRupiah(totalOnlineFilter)}</div>
-            <div className="col-span-2 border-t border-black pt-2 flex justify-between font-black text-sm">
-              <span>TOTAL AKUMULASI PENDAPATAN SHIFT:</span>
-              <span>{formatRupiah(totalNominalFilter)}</span>
-            </div>
-          </div>
-
-          <table className="w-full text-left border-collapse text-xs mb-6">
-            <thead>
-              <tr className="border-b-2 border-black">
-                <th className="py-2 px-2">No</th>
-                <th className="py-2 px-2">ID Transaksi</th>
-                <th className="py-2 px-2">No RM / Nama Pasien</th>
-                <th className="py-2 px-2">Triase &amp; Pembayaran</th>
-                <th className="py-2 px-2 text-right">Tarif (Rp)</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-black/30">
-              {filteredRiwayat.map((item, idx) => (
-                <tr key={item.id}>
-                  <td className="py-1.5 px-2">{idx + 1}</td>
-                  <td className="py-1.5 px-2 font-mono">{item.id}</td>
-                  <td className="py-1.5 px-2 font-bold">{item.noRm} - {item.namaPasien}</td>
-                  <td className="py-1.5 px-2">Triase: {item.triase || 'Hijau'} | {item.metodeBayar}</td>
-                  <td className="py-1.5 px-2 text-right font-black">{formatRupiah(item.totalTarif)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          <div className="grid grid-cols-2 gap-8 text-center text-xs mt-12">
-            <div>
-              <p className="mb-20">Mengetahui,<br/>Bendahara Penerimaan RSUD</p>
-              <p className="font-bold underline uppercase">( ............................................ )</p>
-            </div>
-            <div>
-              <p className="mb-1">Kerinci, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
-              <p className="mb-20">Petugas Kasir IGD</p>
-              <p className="font-bold underline uppercase">({activeCashier.nama})</p>
-            </div>
-          </div>
+        {/* TOMBOL TUTUP & CETAK ULANG */}
+        <div className="flex justify-between items-center">
+          <button
+            onClick={() => {
+              const rec = selectedDetailRecord;
+              setSelectedDetailRecord(null);
+              handlePrintSingleRecord(rec);
+            }}
+            className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow"
+          >
+            <Printer className="w-4 h-4" /> Cetak Formulir A4 Pasien Ini
+          </button>
+          <button
+            onClick={() => setSelectedDetailRecord(null)}
+            className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold transition shadow cursor-pointer"
+          >
+            Tutup Rincian
+          </button>
         </div>
-      )}
 
-      {/* MODAL PRATINJAU STRUK (*PREVIEW MODAL*) */}
-      {showPreviewModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 print:hidden">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200">
-            <div className="flex items-center justify-between border-b border-slate-200 pb-3 mb-4">
-              <h3 className="text-xs font-black uppercase text-slate-900 tracking-wider">Pratinjau Struk / Tagihan IGD</h3>
-              <button onClick={() => setShowPreviewModal(false)} className="p-1.5 hover:bg-slate-100 rounded-full transition cursor-pointer">
-                <X className="w-4 h-4 text-slate-600" />
-              </button>
-            </div>
-            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 text-xs space-y-2 mb-4 font-mono">
-              <p><span className="font-bold">Pasien:</span> {formData.nama || '(Belum diisi)'}</p>
-              <p><span className="font-bold">No RM:</span> {formData.noRm || '(Belum diisi)'}</p>
-              <p><span className="font-bold">Triase:</span> {formData.triase}</p>
-              <p><span className="font-bold">Metode:</span> {formData.metodeBayar} ({formData.penjaminan})</p>
-              <p><span className="font-bold">Total Biaya:</span> {formatRupiah(totalTarif)}</p>
-              <p><span className="font-bold">Jumlah Item:</span> {Object.keys(selectedItems).length} Tindakan dipilih</p>
-            </div>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setShowPreviewModal(false)}
-                className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold transition cursor-pointer"
-              >
-                Tutup
-              </button>
-              <button
-                onClick={() => {
-                  setShowPreviewModal(false);
-                  handlePrint();
-                }}
-                className="px-4 py-2 bg-sky-700 hover:bg-sky-600 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow"
-              >
-                <Printer className="w-3.5 h-3.5" /> Cetak Sekarang
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL STRUK THERMAL KASIR (80MM) */}
-      {showThermalModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 print:hidden">
-          <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-200">
-            <div className="flex items-center justify-between border-b border-slate-200 pb-3 mb-4">
-              <h3 className="text-xs font-black uppercase text-slate-900 tracking-wider">Struk Thermal Kasir (80mm)</h3>
-              <button onClick={() => setShowThermalModal(false)} className="p-1.5 hover:bg-slate-100 rounded-full transition cursor-pointer">
-                <X className="w-4 h-4 text-slate-600" />
-              </button>
-            </div>
-
-            <div className="bg-amber-50/50 p-4 rounded-2xl border border-amber-200 font-mono text-[11px] text-slate-900 space-y-1 mb-4 shadow-inner">
-              <div className="text-center font-bold border-b border-dashed border-slate-400 pb-2 mb-2">
-                <p>RSUD BUKIT KERMAN</p>
-                <p className="text-[9px]">INSTALASI GAWAT DARURAT (IGD)</p>
-              </div>
-              <p><span className="font-bold">Tgl:</span> {new Date().toLocaleDateString('id-ID')}</p>
-              <p><span className="font-bold">RM:</span> {formData.noRm || '-'}</p>
-              <p><span className="font-bold">Pasien:</span> {formData.nama || '-'}</p>
-              <p><span className="font-bold">Triase:</span> {formData.triase}</p>
-              <div className="border-t border-dashed border-slate-400 pt-2 my-2">
-                {Object.entries(selectedItems).map(([id, qty]) => {
-                  const item = daftarTindakanIGD.find(t => t.id === id);
-                  if (!item) return null;
-                  return (
-                    <div key={id} className="flex justify-between text-[10px]">
-                      <span>{qty}x {item.nama.substring(0, 18)}</span>
-                      <span>{formatRupiah(qty * item.tarif)}</span>
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="border-t border-dashed border-slate-400 pt-2 flex justify-between font-bold text-xs">
-                <span>TOTAL:</span>
-                <span>{formatRupiah(totalTarif)}</span>
-              </div>
-              <div className="text-center text-[9px] text-slate-500 pt-3 border-t border-dashed border-slate-400 mt-2">
-                <p>Kasir: {activeCashier.nama}</p>
-                <p>TERIMA KASIH &amp; LEKAS SEMBUH</p>
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setShowThermalModal(false)}
-                className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold transition cursor-pointer"
-              >
-                Tutup
-              </button>
-              <button
-                onClick={() => {
-                  setShowThermalModal(false);
-                  handlePrint();
-                }}
-                className="px-4 py-2 bg-indigo-700 hover:bg-indigo-600 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow"
-              >
-                <Printer className="w-3.5 h-3.5" /> Cetak Thermal
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL RINCIAN & STATUS ADMIN */}
-      {selectedDetailRecord && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 print:hidden">
-          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 sm:p-8 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto">
-            
-            <div className="flex items-center justify-between border-b border-slate-200 pb-4 mb-4">
-              <div>
-                <h3 className="text-sm font-black uppercase text-slate-900">Rincian Tagihan &amp; Status Admin</h3>
-                <p className="text-[11px] text-slate-500 font-mono">ID Transaksi: {selectedDetailRecord.id}</p>
-              </div>
-              <button 
-                onClick={() => setSelectedDetailRecord(null)}
-                className="p-2 hover:bg-slate-100 rounded-full transition cursor-pointer"
-              >
-                <X className="w-5 h-5 text-slate-600" />
-              </button>
-            </div>
-
-            {/* STATUS BANNER */}
-            <div className={`p-4 rounded-2xl mb-5 flex items-center justify-between border ${
-              selectedDetailRecord.status === 'Disetujui' ? 'bg-emerald-50 border-emerald-200 text-emerald-900' :
-              selectedDetailRecord.status === 'Direvisi' ? 'bg-rose-50 border-rose-200 text-rose-900' :
-              'bg-amber-50 border-amber-200 text-amber-900'
-            }`}>
-              <div>
-                <p className="text-[10px] font-extrabold uppercase tracking-wider opacity-80">Status Verifikasi oleh Admin Rumah Sakit</p>
-                <p className="text-sm font-black uppercase mt-0.5">{selectedDetailRecord.status}</p>
-              </div>
-              <span className="text-xs font-bold px-3 py-1 bg-white/80 rounded-full shadow-sm">
-                {selectedDetailRecord.status === 'Disetujui' ? 'Tervalidasi' : 'Dalam Pengecekan'}
-              </span>
-            </div>
-
-            {/* BIODATA PASIEN */}
-            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 mb-5 space-y-2 text-xs">
-              <div className="grid grid-cols-2 gap-2">
-                <div><span className="text-slate-500 font-medium">No. RM:</span> <span className="font-bold text-slate-900">{selectedDetailRecord.noRm}</span></div>
-                <div><span className="text-slate-500 font-medium">Tanggal:</span> <span className="font-bold text-slate-900">{selectedDetailRecord.tanggal}</span></div>
-                <div><span className="text-slate-500 font-medium">Nama Pasien:</span> <span className="font-bold text-slate-900">{selectedDetailRecord.namaPasien}</span></div>
-                <div><span className="text-slate-500 font-medium">Dokter:</span> <span className="font-bold text-slate-900">{selectedDetailRecord.dokter}</span></div>
-                <div><span className="text-slate-500 font-medium">Triase:</span> <span className="font-bold text-slate-900">{selectedDetailRecord.triase || 'Hijau'}</span></div>
-                <div><span className="text-slate-500 font-medium">Metode Bayar:</span> <span className="font-bold text-slate-900">{selectedDetailRecord.metodeBayar} ({selectedDetailRecord.penjaminan})</span></div>
-                <div className="col-span-2"><span className="text-slate-500 font-medium">Alamat:</span> <span className="font-bold text-slate-900">{selectedDetailRecord.alamat || '-'}</span></div>
-              </div>
-            </div>
-
-            {/* TABEL ITEM RINCIAN */}
-            <h4 className="text-xs font-black uppercase text-slate-900 mb-2">Item Pemeriksaan &amp; Tindakan Medis</h4>
-            <div className="border border-slate-200 rounded-2xl overflow-hidden mb-6">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead className="bg-slate-900 text-white uppercase text-[10px]">
-                  <tr>
-                    <th className="p-2.5">Nama Tindakan</th>
-                    <th className="p-2.5 text-center">Qty</th>
-                    <th className="p-2.5 text-right">Tarif</th>
-                    <th className="p-2.5 text-right">Subtotal</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {Object.entries(selectedDetailRecord.items).map(([id, qty]) => {
-                    const item = daftarTindakanIGD.find(t => t.id === id);
-                    if (!item) return null;
-                    const subtotal = qty * item.tarif;
-                    return (
-                      <tr key={id} className="hover:bg-slate-50">
-                        <td className="p-2.5 font-bold text-slate-800">{item.nama}</td>
-                        <td className="p-2.5 text-center font-bold">{qty}</td>
-                        <td className="p-2.5 text-right text-slate-600">{formatRupiah(item.tarif)}</td>
-                        <td className="p-2.5 text-right font-black text-sky-700">{formatRupiah(subtotal)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            {/* TOTAL */}
-            <div className="flex items-center justify-between bg-slate-900 text-white p-4 rounded-2xl mb-6">
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-300">Total Keseluruhan Biaya</span>
-              <span className="text-lg font-black font-mono text-sky-400">{formatRupiah(selectedDetailRecord.totalTarif)}</span>
-            </div>
-
-            {/* TOMBOL TUTUP & CETAK ULANG */}
-            <div className="flex justify-between items-center">
-              <button
-                onClick={() => {
-                  const rec = selectedDetailRecord;
-                  setSelectedDetailRecord(null);
-                  handlePrintSingleRecord(rec);
-                }}
-                className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow"
-              >
-                <Printer className="w-4 h-4" /> Cetak Formulir A4 Pasien Ini
-              </button>
-              <button
-                onClick={() => setSelectedDetailRecord(null)}
-                className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold transition shadow cursor-pointer"
-              >
-                Tutup Rincian
-              </button>
-            </div>
-
-          </div>
-        </div>
-      )}
-
+      </div>
     </div>
-  );
+  )}
+
+</div>
+);
 }

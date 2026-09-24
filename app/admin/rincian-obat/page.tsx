@@ -87,7 +87,14 @@ export default function AdminRincianObatPage() {
   // State Modal Ringkasan Klaim Penjamin
   const [showSummaryModal, setShowSummaryModal] = useState<boolean>(false);
 
-  // State Toast Notification yang Diperbarui
+  // State Cetak Massal / Rekapitulasi (Cetak Terpilih & Cetak Semua)
+  const [isBulkPrintModalOpen, setIsBulkPrintModalOpen] = useState<boolean>(false);
+  const [bulkPrintMode, setBulkPrintMode] = useState<'selected' | 'all'>('selected');
+
+  // State Cetak Slip Individual (Single Slip Print Modal)
+  const [slipPrintRecord, setSlipPrintRecord] = useState<RincianObatRecord | null>(null);
+
+  // State Toast Notification
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'warning' | 'info' } | null>(null);
 
   const showToast = (message: string, type: 'success' | 'error' | 'warning' | 'info' = 'success') => {
@@ -162,7 +169,6 @@ export default function AdminRincianObatPage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Reset halaman ke 1 saat filter atau pencarian berubah
   useEffect(() => {
     setCurrentPage(1);
   }, [searchTerm, statusFilter, serviceFilter, penjaminFilter, dateFilter, startDateFilter, endDateFilter]);
@@ -258,7 +264,6 @@ export default function AdminRincianObatPage() {
       const totalKotor = editItems.reduce((sum, item) => sum + (item.subtotal || 0), 0);
       const totalBaru = Math.max(0, totalKotor - (editingRecord.diskon || 0));
 
-      // Update Header
       await supabase.from('rincian_obat_header').update({
         nama_pasien: editingRecord.nama_pasien,
         no_rm: editingRecord.no_rm,
@@ -266,7 +271,6 @@ export default function AdminRincianObatPage() {
         total_biaya: totalBaru
       }).eq('id', editingRecord.id);
 
-      // Re-insert details
       await supabase.from('rincian_obat_detail').delete().eq('header_id', editingRecord.id);
       const detailsPayload = editItems.map(item => ({
         header_id: editingRecord.id,
@@ -338,14 +342,6 @@ export default function AdminRincianObatPage() {
     showToast(`Berhasil mengunduh ${selectedRecords.length} data terpilih.`, 'success');
   };
 
-  const handlePrintDetail = () => {
-    window.print();
-  };
-
-  const handlePrintReport = () => {
-    window.print();
-  };
-
   const formatRupiah = (num: number) => {
     return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(num || 0);
   };
@@ -409,21 +405,16 @@ export default function AdminRincianObatPage() {
     return 0;
   });
 
-  // Logika Pagination Data
   const totalPages = Math.ceil(sortedRecords.length / itemsPerPage) || 1;
   const paginatedRecords = sortedRecords.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   const totalPending = records.filter(r => r.status_verifikasi === 'Menunggu Verifikasi').length;
   const totalDisetujui = records.filter(r => r.status_verifikasi === 'Disetujui').length;
-  const totalDitolak = records.filter(r => r.status_verifikasi === 'Ditolak').length;
   const totalNominal = records.reduce((acc, curr) => acc + (curr.total_biaya || 0), 0);
-
-  // Akumulasi Nominal Berkas Terpilih untuk Bulk Action
   const selectedTotalNominal = records
     .filter(r => selectedIds.includes(r.id))
     .reduce((acc, curr) => acc + (curr.total_biaya || 0), 0);
 
-  // Perhitungan Ringkasan Penjamin & Layanan
   const totalBpjsNominal = records.filter(r => (r.penjamin || 'Umum') === 'BPJS Kesehatan').reduce((acc, curr) => acc + (curr.total_biaya || 0), 0);
   const totalUmumNominal = records.filter(r => (r.penjamin || 'Umum') !== 'BPJS Kesehatan').reduce((acc, curr) => acc + (curr.total_biaya || 0), 0);
   const countBpjs = records.filter(r => (r.penjamin || 'Umum') === 'BPJS Kesehatan').length;
@@ -434,11 +425,11 @@ export default function AdminRincianObatPage() {
   const countIgd = records.filter(r => r.jenis_layanan === 'IGD').length;
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col justify-between selection:bg-purple-500 selection:text-white">
+    <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col justify-between selection:bg-purple-500 selection:text-white print:min-h-0 print:block print:bg-white print:justify-start">
       
-      {/* TOAST NOTIFICATION BANNER (DIPERBARUI LEBIH ELEGAN & RESPONSIF) */}
+      {/* TOAST NOTIFICATION */}
       {toast && (
-        <div className="fixed bottom-6 right-6 z-70 bg-slate-900/95 backdrop-blur-md text-white px-5 py-4 rounded-2xl shadow-2xl flex items-center justify-between gap-4 border border-slate-700/80 animate-in fade-in slide-in-from-bottom-5 duration-300 min-w-[300px] max-w-md">
+        <div className="fixed bottom-6 right-6 z-70 bg-slate-900/95 backdrop-blur-md text-white px-5 py-4 rounded-2xl shadow-2xl flex items-center justify-between gap-4 border border-slate-700/80 animate-in fade-in slide-in-from-bottom-5 duration-300 min-w-[300px] max-w-md print:hidden">
           <div className="flex items-center gap-3">
             {toast.type === 'success' && <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />}
             {toast.type === 'error' && <AlertCircle className="w-5 h-5 text-rose-400 shrink-0" />}
@@ -446,25 +437,11 @@ export default function AdminRincianObatPage() {
             {toast.type === 'info' && <Activity className="w-5 h-5 text-sky-400 shrink-0" />}
             <span className="text-xs font-semibold leading-relaxed">{toast.message}</span>
           </div>
-          <button 
-            onClick={() => setToast(null)} 
-            className="text-slate-400 hover:text-white p-1 rounded-lg transition cursor-pointer shrink-0"
-            title="Tutup Notifikasi"
-          >
+          <button onClick={() => setToast(null)} className="text-slate-400 hover:text-white p-1 rounded-lg transition cursor-pointer shrink-0">
             <X className="w-4 h-4" />
           </button>
         </div>
       )}
-
-      {/* KOP CETAK KHUSUS LAPORAN RESMI (Hanya Muncul Saat Print) */}
-      <div className="hidden print:block p-6 text-center border-b-2 border-slate-900 mb-6">
-        <h2 className="text-lg font-black uppercase">PEMERINTAH KABUPATEN KERINCI</h2>
-        <h1 className="text-xl font-black uppercase">RUMAH SAKIT UMUM DAERAH BUKIT KERMAN</h1>
-        <p className="text-xs">Jl. Lintas Kerinci - Sungai Penuh, Kab. Kerinci, Jambi</p>
-        <hr className="my-2 border-slate-400" />
-        <h3 className="text-sm font-bold uppercase mt-2">LAPORAN REKAPITULASI AUDIT RINCIAN OBAT &amp; OBHP</h3>
-        <p className="text-[10px] text-slate-600">Dicetak pada: {new Date().toLocaleString('id-ID')}</p>
-      </div>
 
       <div className="print:hidden">
         <AdminHeader 
@@ -475,7 +452,7 @@ export default function AdminRincianObatPage() {
         />
       </div>
 
-      <main className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-8 flex-1 space-y-6">
+      <main className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-8 flex-1 space-y-6 print:p-0 print:max-w-none">
         
         {/* TOP BAR ACTION */}
         <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 print:hidden">
@@ -487,35 +464,38 @@ export default function AdminRincianObatPage() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button
+              disabled={selectedIds.length === 0}
+              onClick={() => { setBulkPrintMode('selected'); setIsBulkPrintModalOpen(true); }}
+              className="bg-purple-50 hover:bg-purple-100 disabled:opacity-40 text-purple-800 border border-purple-300 font-bold text-xs px-3.5 py-3 rounded-2xl transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+              title="Cetak berkas audit yang dicentang di tabel"
+            >
+              <Printer className="w-4 h-4" /> Cetak Terpilih ({selectedIds.length})
+            </button>
+            <button
+              onClick={() => { setBulkPrintMode('all'); setIsBulkPrintModalOpen(true); }}
+              className="bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs px-3.5 py-3 rounded-2xl transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+              title="Cetak seluruh rekapan data audit"
+            >
+              <Printer className="w-4 h-4 text-purple-300" /> Cetak Semua Rekapan
+            </button>
+            <button
               onClick={() => setShowSummaryModal(true)}
-              className="bg-purple-50 hover:bg-purple-100 text-purple-700 font-bold text-xs px-3.5 py-3 rounded-2xl transition flex items-center gap-1.5 cursor-pointer border border-purple-200"
-              title="Lihat Ringkasan Klaim Penjamin"
+              className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs px-3.5 py-3 rounded-2xl transition flex items-center gap-1.5 cursor-pointer"
             >
               <PieChart className="w-4 h-4 text-purple-600" /> Ringkasan Penjamin
             </button>
             <button
-              onClick={handlePrintReport}
-              className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs px-3.5 py-3 rounded-2xl transition flex items-center gap-1.5 cursor-pointer"
-              title="Cetak Laporan Rekap"
-            >
-              <Printer className="w-4 h-4 text-purple-600" /> Cetak Rekap
-            </button>
-            <button
               onClick={handleExportCSV}
               className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs px-3.5 py-3 rounded-2xl transition flex items-center gap-1.5 cursor-pointer"
-              title="Unduh Laporan Audit CSV"
             >
               <FileSpreadsheet className="w-4 h-4 text-purple-600" /> Ekspor Audit
             </button>
           </div>
         </div>
 
-        {/* METRIK STATISTIK AUDIT INTERAKTIF */}
+        {/* METRIK STATISTIK AUDIT */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 print:hidden">
-          <div 
-            onClick={() => setStatusFilter('semua')}
-            className="bg-white border border-slate-200/80 p-4 rounded-2xl shadow-sm flex items-center justify-between cursor-pointer hover:border-purple-400 hover:shadow transition"
-          >
+          <div onClick={() => setStatusFilter('semua')} className="bg-white border border-slate-200/80 p-4 rounded-2xl shadow-sm flex items-center justify-between cursor-pointer hover:border-purple-400 hover:shadow transition">
             <div>
               <span className="text-[11px] font-bold text-slate-400 uppercase">Total Berkas</span>
               <h3 className="text-lg font-black text-slate-900">{records.length} Transaksi</h3>
@@ -525,10 +505,7 @@ export default function AdminRincianObatPage() {
             </div>
           </div>
 
-          <div 
-            onClick={() => setStatusFilter('pending')}
-            className="bg-white border border-slate-200/80 p-4 rounded-2xl shadow-sm flex items-center justify-between cursor-pointer hover:border-amber-400 hover:shadow transition"
-          >
+          <div onClick={() => setStatusFilter('pending')} className="bg-white border border-slate-200/80 p-4 rounded-2xl shadow-sm flex items-center justify-between cursor-pointer hover:border-amber-400 hover:shadow transition">
             <div>
               <span className="text-[11px] font-bold text-slate-400 uppercase">Menunggu Verifikasi</span>
               <h3 className="text-lg font-black text-amber-600">{totalPending} Berkas</h3>
@@ -538,10 +515,7 @@ export default function AdminRincianObatPage() {
             </div>
           </div>
 
-          <div 
-            onClick={() => setStatusFilter('disetujui')}
-            className="bg-white border border-slate-200/80 p-4 rounded-2xl shadow-sm flex items-center justify-between cursor-pointer hover:border-emerald-400 hover:shadow transition"
-          >
+          <div onClick={() => setStatusFilter('disetujui')} className="bg-white border border-slate-200/80 p-4 rounded-2xl shadow-sm flex items-center justify-between cursor-pointer hover:border-emerald-400 hover:shadow transition">
             <div>
               <span className="text-[11px] font-bold text-slate-400 uppercase">Disetujui Auditor</span>
               <h3 className="text-lg font-black text-emerald-600">{totalDisetujui} Berkas</h3>
@@ -562,7 +536,7 @@ export default function AdminRincianObatPage() {
           </div>
         </div>
 
-        {/* DISTRIBUSI LAYANAN MINI BAR */}
+        {/* DISTRIBUSI BEBAN INSTALASI */}
         <div className="bg-white border border-slate-200/80 p-4 rounded-2xl shadow-sm flex flex-wrap items-center justify-between gap-3 text-xs font-bold print:hidden">
           <div className="flex items-center gap-2 text-slate-700">
             <Activity className="w-4 h-4 text-purple-600" />
@@ -589,32 +563,22 @@ export default function AdminRincianObatPage() {
                 className="w-full bg-slate-50 border border-slate-200 rounded-2xl pl-9 pr-9 py-2 text-xs focus:outline-none"
               />
               {searchTerm && (
-                <button
-                  onClick={() => setSearchTerm('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
-                  title="Hapus pencarian"
-                >
+                <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer">
                   <X className="w-3.5 h-3.5" />
                 </button>
               )}
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <button
-                onClick={handleResetFilters}
-                className="bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer"
-                title="Reset seluruh filter"
-              >
+              <button onClick={handleResetFilters} className="bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer">
                 <RotateCcw className="w-3.5 h-3.5 text-purple-600" /> Reset
               </button>
 
-              {/* TOMBOL TOGGLE DENSITY TABEL */}
               <button
                 onClick={() => setIsCompact(!isCompact)}
                 className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer border ${
                   isCompact ? 'bg-purple-100 text-purple-800 border-purple-300' : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
                 }`}
-                title="Ubah kerapatan baris tabel"
               >
                 {isCompact ? <Maximize2 className="w-3.5 h-3.5" /> : <Minimize2 className="w-3.5 h-3.5" />}
                 <span>{isCompact ? 'Padat' : 'Normal'}</span>
@@ -634,66 +598,12 @@ export default function AdminRincianObatPage() {
               </div>
 
               <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-2xl text-xs font-bold">
-                <button onClick={() => setDateFilter('semua')} className={`px-2 py-1.5 rounded-xl transition cursor-pointer ${dateFilter === 'semua' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>Waktu</button>
-                <button onClick={() => setDateFilter('hari_ini')} className={`px-2 py-1.5 rounded-xl transition cursor-pointer ${dateFilter === 'hari_ini' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>Hari Ini</button>
-                <button onClick={() => setDateFilter('minggu_ini')} className={`px-2 py-1.5 rounded-xl transition cursor-pointer ${dateFilter === 'minggu_ini' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>Minggu Ini</button>
-                <button onClick={() => setDateFilter('bulan_ini')} className={`px-2 py-1.5 rounded-xl transition cursor-pointer ${dateFilter === 'bulan_ini' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>Bulan Ini</button>
-                <button onClick={() => setDateFilter('custom')} className={`px-2 py-1.5 rounded-xl transition cursor-pointer ${dateFilter === 'custom' ? 'bg-white text-purple-800 shadow-sm' : 'text-slate-500'}`}>Kustom</button>
-              </div>
-
-              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-2xl text-xs font-bold">
                 <button onClick={() => setStatusFilter('semua')} className={`px-3 py-1.5 rounded-xl transition cursor-pointer ${statusFilter === 'semua' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>Status ({records.length})</button>
                 <button onClick={() => setStatusFilter('pending')} className={`px-3 py-1.5 rounded-xl transition cursor-pointer ${statusFilter === 'pending' ? 'bg-white text-amber-700 shadow-sm' : 'text-slate-500'}`}>Pending ({totalPending})</button>
                 <button onClick={() => setStatusFilter('disetujui')} className={`px-3 py-1.5 rounded-xl transition cursor-pointer ${statusFilter === 'disetujui' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500'}`}>Disetujui ({totalDisetujui})</button>
               </div>
             </div>
           </div>
-
-          {/* INDIKATOR BADGE FILTER AKTIF */}
-          {(serviceFilter !== 'semua' || penjaminFilter !== 'semua' || statusFilter !== 'semua' || dateFilter !== 'semua' || searchTerm !== '') && (
-            <div className="flex flex-wrap items-center gap-2 pt-2 text-[11px] print:hidden">
-              <span className="text-slate-400 font-bold flex items-center gap-1"><ListFilter className="w-3.5 h-3.5 text-purple-600" /> Filter Aktif:</span>
-              {searchTerm && (
-                <span className="bg-purple-50 text-purple-700 px-2.5 py-1 rounded-lg border border-purple-200 flex items-center gap-1">
-                  Pencarian: &quot;{searchTerm}&quot; <X className="w-3 h-3 cursor-pointer" onClick={() => setSearchTerm('')} />
-                </span>
-              )}
-              {serviceFilter !== 'semua' && (
-                <span className="bg-purple-50 text-purple-700 px-2.5 py-1 rounded-lg border border-purple-200 flex items-center gap-1">
-                  Layanan: {serviceFilter} <X className="w-3 h-3 cursor-pointer" onClick={() => setServiceFilter('semua')} />
-                </span>
-              )}
-              {penjaminFilter !== 'semua' && (
-                <span className="bg-purple-50 text-purple-700 px-2.5 py-1 rounded-lg border border-purple-200 flex items-center gap-1">
-                  Penjamin: {penjaminFilter} <X className="w-3 h-3 cursor-pointer" onClick={() => setPenjaminFilter('semua')} />
-                </span>
-              )}
-              {statusFilter !== 'semua' && (
-                <span className="bg-purple-50 text-purple-700 px-2.5 py-1 rounded-lg border border-purple-200 flex items-center gap-1">
-                  Status: {statusFilter} <X className="w-3 h-3 cursor-pointer" onClick={() => setStatusFilter('semua')} />
-                </span>
-              )}
-              {dateFilter !== 'semua' && (
-                <span className="bg-purple-50 text-purple-700 px-2.5 py-1 rounded-lg border border-purple-200 flex items-center gap-1">
-                  Waktu: {dateFilter} <X className="w-3 h-3 cursor-pointer" onClick={() => { setDateFilter('semua'); setStartDateFilter(''); setEndDateFilter(''); }} />
-                </span>
-              )}
-            </div>
-          )}
-
-          {dateFilter === 'custom' && (
-            <div className="bg-purple-50/70 border border-purple-200 p-4 rounded-2xl flex flex-wrap items-center gap-4 text-xs font-bold print:hidden">
-              <span className="text-purple-900 flex items-center gap-1.5"><Filter className="w-4 h-4 text-purple-600" /> Saring Rentang Tanggal Audit:</span>
-              <div className="flex items-center gap-2">
-                <label className="text-slate-600">Dari:</label>
-                <input type="date" value={startDateFilter} onChange={(e) => setStartDateFilter(e.target.value)} className="bg-white border border-slate-300 rounded-xl p-1.5 font-mono" />
-              </div>
-              <div className="flex items-center gap-2">
-                <label className="text-slate-600">Sampai:</label>
-                <input type="date" value={endDateFilter} onChange={(e) => setEndDateFilter(e.target.value)} className="bg-white border border-slate-300 rounded-xl p-1.5 font-mono" />
-              </div>
-            </div>
-          )}
 
           {selectedIds.length > 0 && (
             <div className="bg-purple-600 text-white p-3.5 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs font-bold shadow-lg print:hidden">
@@ -718,7 +628,7 @@ export default function AdminRincianObatPage() {
             </div>
           )}
 
-          <div className="border border-slate-200 rounded-2xl overflow-hidden print:border-slate-900">
+          <div className="border border-slate-200 rounded-2xl overflow-hidden print:border-none">
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-slate-100 text-slate-700 font-black uppercase border-b border-slate-200 text-[10px] print:bg-slate-200 print:text-black">
@@ -755,7 +665,6 @@ export default function AdminRincianObatPage() {
                       <div className="flex flex-col items-center justify-center space-y-2">
                         <FileText className="w-8 h-8 text-slate-300" />
                         <p className="text-xs font-bold text-slate-600">Tidak ada data rincian obat ditemukan.</p>
-                        <p className="text-[11px] text-slate-400">Coba ubah kata kunci pencarian atau filter Anda.</p>
                       </div>
                     </td>
                   </tr>
@@ -795,7 +704,6 @@ export default function AdminRincianObatPage() {
                           className={`p-1.5 rounded-xl border transition cursor-pointer text-[10px] font-bold flex items-center gap-1 mx-auto ${
                             r.is_locked ? 'bg-amber-50 text-amber-800 border-amber-300' : 'bg-emerald-50 text-emerald-800 border-emerald-300'
                           }`}
-                          title="Klik untuk ubah status kunci kasir"
                         >
                           {r.is_locked ? <Lock className="w-3.5 h-3.5 text-amber-600" /> : <Unlock className="w-3.5 h-3.5 text-emerald-600" />}
                           <span>{r.is_locked ? 'Locked' : 'Unlocked'}</span>
@@ -811,39 +719,19 @@ export default function AdminRincianObatPage() {
                       </td>
                       <td className={`text-center print:hidden ${isCompact ? 'p-2' : 'p-3.5'}`}>
                         <div className="flex items-center justify-center gap-1">
-                          <button
-                            onClick={() => setDetailModalRecord(r)}
-                            className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition cursor-pointer"
-                            title="Inspeksi Rincian"
-                          >
+                          <button onClick={() => setDetailModalRecord(r)} className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition cursor-pointer" title="Inspeksi Rincian">
                             <Eye className="w-3.5 h-3.5 text-purple-600" />
                           </button>
-                          <button
-                            onClick={() => handleApprove(r.id)}
-                            className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl transition cursor-pointer"
-                            title="Setujui"
-                          >
+                          <button onClick={() => handleApprove(r.id)} className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl transition cursor-pointer" title="Setujui">
                             <CheckCircle2 className="w-3.5 h-3.5" />
                           </button>
-                          <button
-                            onClick={() => handleReject(r.id)}
-                            className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl transition cursor-pointer"
-                            title="Tolak"
-                          >
+                          <button onClick={() => handleReject(r.id)} className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl transition cursor-pointer" title="Tolak">
                             <XCircle className="w-3.5 h-3.5" />
                           </button>
-                          <button
-                            onClick={() => handleOpenEditModal(r)}
-                            className="p-1.5 bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-xl transition cursor-pointer"
-                            title="Edit Data (Super Admin)"
-                          >
+                          <button onClick={() => handleOpenEditModal(r)} className="p-1.5 bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-xl transition cursor-pointer" title="Edit Data">
                             <Edit3 className="w-3.5 h-3.5" />
                           </button>
-                          <button
-                            onClick={() => handleDelete(r.id)}
-                            className="p-1.5 bg-slate-100 hover:bg-rose-100 text-slate-500 hover:text-rose-700 rounded-xl transition cursor-pointer"
-                            title="Hapus"
-                          >
+                          <button onClick={() => handleDelete(r.id)} className="p-1.5 bg-slate-100 hover:bg-rose-100 text-slate-500 hover:text-rose-700 rounded-xl transition cursor-pointer" title="Hapus">
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
@@ -853,26 +741,6 @@ export default function AdminRincianObatPage() {
                 )}
               </tbody>
             </table>
-          </div>
-
-          {/* BLOK TANDA TANGAN RESMI CETAK LAPORAN (Hanya Muncul Saat Print) */}
-          <div className="hidden print:block mt-12 pt-6 border-t border-slate-900 text-xs">
-            <div className="flex justify-between px-8 text-center">
-              <div>
-                <p>Mengetahui,</p>
-                <p className="font-bold">Direktur RSUD Bukit Kerman</p>
-                <div className="h-20"></div>
-                <p className="underline font-bold">( _______________________________ )</p>
-                <p className="text-[10px]">NIP. ...............................................</p>
-              </div>
-              <div>
-                <p>Kerinci, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
-                <p className="font-bold">Tim Verifikasi &amp; Auditor RSUD</p>
-                <div className="h-20"></div>
-                <p className="underline font-bold">( _______________________________ )</p>
-                <p className="text-[10px]">NIP. ...............................................</p>
-              </div>
-            </div>
           </div>
 
           {/* PAGINASI KONTROL */}
@@ -903,12 +771,210 @@ export default function AdminRincianObatPage() {
             </div>
           )}
         </div>
-
       </main>
 
-      {/* MODAL RINGKASAN KLAIM PENJAMIN (BPJS vs UMUM) */}
+      {/* MODAL BULK PRINT (CETAK REKAPAN TERPILIH / SEMUA DENGAN KOP RESMI RSUD) */}
+      {isBulkPrintModalOpen && (
+        <div className="fixed inset-0 z-60 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 print:p-0 print:bg-white print:fixed print:inset-0 print:z-50 print:block">
+          <div className="bg-white rounded-3xl max-w-4xl w-full p-8 shadow-2xl border border-slate-200 space-y-6 max-h-[90vh] flex flex-col print:border-0 print:shadow-none print:max-w-none print:p-4 print:max-h-none print:rounded-none">
+            
+            {/* KOP SURAT RESMI RSUD BUKIT KERMAN */}
+            <div className="border-b-4 border-black pb-3 text-center relative font-serif">
+              <div className="flex items-center justify-between">
+                <img src="/logo-pemkab.png" alt="Logo Kab Kerinci" className="w-16 h-16 object-contain" />
+                <div className="text-center flex-1 mx-2">
+                  <h3 className="text-xs font-bold tracking-wide uppercase">PEMERINTAH KABUPATEN KERINCI</h3>
+                  <h2 className="text-sm font-black tracking-wide uppercase">DINAS KESEHATAN</h2>
+                  <h1 className="text-lg font-black tracking-wider uppercase">RSUD BUKIT KERMAN</h1>
+                  <p className="text-[9px] font-sans">Desa Pondok, Kecamatan Bukit Kerman, Kode Pos: 37176</p>
+                </div>
+                <img src="/logo-rsud.png" alt="Logo RSUD" className="w-16 h-16 object-contain" />
+              </div>
+            </div>
+
+            <div className="text-center font-black text-xs uppercase underline tracking-wider font-sans pt-1">
+              {bulkPrintMode === 'selected' ? 'REKAPITULASI AUDIT BIAYA OBAT & OBHP (DATA TERPILIH)' : 'REKAPITULASI KESELURUHAN AUDIT BIAYA OBAT & OBHP'}
+            </div>
+
+            <div className="text-[11px] font-mono text-center text-slate-600">
+              Tanggal Cetak: {new Date().toLocaleDateString('id-ID', { dateStyle: 'full' })} &bull; Total Berkas: {bulkPrintMode === 'selected' ? selectedIds.length : filteredRecords.length}
+            </div>
+
+            <div className="border-2 border-black overflow-y-auto flex-1 max-h-[50vh] print:max-h-none">
+              <table className="w-full text-left text-xs border-collapse font-sans">
+                <thead>
+                  <tr className="border-b-2 border-black bg-slate-100 print:bg-slate-200 font-black text-center uppercase text-[10px]">
+                    <th className="p-2 border-r border-black w-10">No</th>
+                    <th className="p-2 border-r border-black">No. Transaksi</th>
+                    <th className="p-2 border-r border-black">Tanggal</th>
+                    <th className="p-2 border-r border-black">No. RM &amp; Nama Pasien</th>
+                    <th className="p-2 border-r border-black">Layanan / Penjamin</th>
+                    <th className="p-2 border-r border-black">Status Verifikasi</th>
+                    <th className="p-2 text-right">Total Biaya</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y border-black font-medium text-[11px]">
+                  {(() => {
+                    const targetData = bulkPrintMode === 'selected'
+                      ? records.filter(r => selectedIds.includes(r.id))
+                      : filteredRecords;
+
+                    const grandTotal = targetData.reduce((acc, curr) => acc + (curr.total_biaya || 0), 0);
+
+                    return (
+                      <>
+                        {targetData.map((r, i) => (
+                          <tr key={r.id} className="border-b border-black">
+                            <td className="p-2 border-r border-black text-center font-mono">{i + 1}</td>
+                            <td className="p-2 border-r border-black font-mono font-bold">{r.no_transaksi}</td>
+                            <td className="p-2 border-r border-black font-mono">{new Date(r.created_at).toLocaleDateString('id-ID')}</td>
+                            <td className="p-2 border-r border-black">
+                              <strong className="block uppercase">{r.nama_pasien}</strong>
+                              <span className="font-mono text-[10px]">RM: {r.no_rm}</span>
+                            </td>
+                            <td className="p-2 border-r border-black">
+                              <span className="block font-bold">{r.jenis_layanan}</span>
+                              <span className="text-[10px]">{r.penjamin || 'Umum'}</span>
+                            </td>
+                            <td className="p-2 border-r border-black text-center uppercase font-bold text-[10px]">{r.status_verifikasi}</td>
+                            <td className="p-2 text-right font-mono font-bold">{formatRupiah(r.total_biaya)}</td>
+                          </tr>
+                        ))}
+                        <tr className="border-t-2 border-black font-black bg-slate-50 print:bg-slate-100">
+                          <td colSpan={6} className="p-2.5 border-r border-black text-right uppercase">TOTAL KESELURUHAN AUDIT:</td>
+                          <td className="p-2.5 text-right font-mono text-sm">{formatRupiah(grandTotal)}</td>
+                        </tr>
+                      </>
+                    );
+                  })()}
+                </tbody>
+              </table>
+            </div>
+
+            {/* BLOK TANDA TANGAN PEJABAT RESMI */}
+            <div className="pt-4 flex justify-between items-end font-sans text-xs">
+              <div>
+                <p className="font-bold text-slate-500">Mengetahui,</p>
+                <p className="font-bold">Direktur RSUD Bukit Kerman</p>
+                <div className="h-16"></div>
+                <p className="font-bold underline">( _______________________________ )</p>
+                <p className="text-[10px]">NIP. ...............................................</p>
+              </div>
+              <div className="text-right">
+                <p className="font-bold text-slate-500">Kerinci, {new Date().toLocaleDateString('id-ID')}</p>
+                <p className="font-bold">Tim Verifikasi &amp; Auditor</p>
+                <div className="h-16"></div>
+                <p className="font-bold underline">( _______________________________ )</p>
+                <p className="text-[10px]">NIP. ...............................................</p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-4 border-t border-slate-200 print:hidden">
+              <button onClick={() => setIsBulkPrintModalOpen(false)} className="px-4 py-2 bg-slate-200 text-slate-700 rounded-xl text-xs font-bold cursor-pointer">Tutup</button>
+              <button onClick={() => window.print()} className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold shadow flex items-center gap-1.5 cursor-pointer">
+                <Printer className="w-4 h-4" /> Cetak Laporan Resmi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL CETAK SLIP TRANSAKSI INDIVIDUAL */}
+      {slipPrintRecord && (
+        <div className="fixed inset-0 z-70 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 print:p-0 print:bg-white print:fixed print:inset-0 print:z-50 print:block">
+          <div className="bg-white rounded-3xl max-w-2xl w-full p-8 shadow-2xl border border-slate-200 space-y-6 max-h-[90vh] flex flex-col print:border-0 print:shadow-none print:max-w-none print:p-4 print:max-h-none print:rounded-none">
+            
+            {/* KOP SURAT RESMI RSUD BUKIT KERMAN */}
+            <div className="border-b-4 border-black pb-3 text-center relative font-serif">
+              <div className="flex items-center justify-between">
+                <img src="/logo-pemkab.png" alt="Logo Kab Kerinci" className="w-16 h-16 object-contain" />
+                <div className="text-center flex-1 mx-2">
+                  <h3 className="text-xs font-bold tracking-wide uppercase">PEMERINTAH KABUPATEN KERINCI</h3>
+                  <h2 className="text-sm font-black tracking-wide uppercase">DINAS KESEHATAN</h2>
+                  <h1 className="text-lg font-black tracking-wider uppercase">RSUD BUKIT KERMAN</h1>
+                  <p className="text-[9px] font-sans">Desa Pondok, Kecamatan Bukit Kerman, Kode Pos: 37176</p>
+                </div>
+                <img src="/logo-rsud.png" alt="Logo RSUD" className="w-16 h-16 object-contain" />
+              </div>
+            </div>
+
+            <div className="text-center font-black text-xs uppercase underline tracking-wider font-sans pt-1">
+              SLIP RINCIAN BIAYA OBAT &amp; OBHP
+            </div>
+
+            <div className="bg-slate-50 print:bg-transparent border border-black p-3 rounded-2xl text-xs space-y-1 font-sans">
+              <div className="flex justify-between">
+                <span>No. Transaksi: <strong className="font-mono">{slipPrintRecord.no_transaksi}</strong></span>
+                <span>Tanggal: <strong className="font-mono">{new Date(slipPrintRecord.created_at).toLocaleDateString('id-ID')}</strong></span>
+              </div>
+              <div className="flex justify-between">
+                <span>Nama Pasien: <strong className="uppercase">{slipPrintRecord.nama_pasien}</strong> (RM: <span className="font-mono">{slipPrintRecord.no_rm}</span>)</span>
+                <span>Layanan: <strong>{slipPrintRecord.jenis_layanan}</strong></span>
+              </div>
+              <div className="flex justify-between">
+                <span>Penjamin: <strong>{slipPrintRecord.penjamin || 'Umum'}</strong></span>
+                <span>Status Verifikasi: <strong className="uppercase">{slipPrintRecord.status_verifikasi}</strong></span>
+              </div>
+            </div>
+
+            <div className="border-2 border-black overflow-y-auto flex-1 max-h-[40vh] print:max-h-none">
+              <table className="w-full text-left text-xs border-collapse font-sans">
+                <thead>
+                  <tr className="border-b-2 border-black bg-slate-100 print:bg-slate-200 font-black uppercase text-[10px]">
+                    <th className="p-2 border-r border-black w-10 text-center">No</th>
+                    <th className="p-2 border-r border-black">Nama Obat / OBHP</th>
+                    <th className="p-2 border-r border-black w-16 text-center">Qty</th>
+                    <th className="p-2 border-r border-black w-24 text-right">Harga Satuan</th>
+                    <th className="p-2 text-right w-28">Subtotal</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y border-black font-medium text-[11px]">
+                  {slipPrintRecord.rincian_obat_detail?.map((item, i) => (
+                    <tr key={i} className="border-b border-black">
+                      <td className="p-2 border-r border-black text-center font-mono">{i + 1}</td>
+                      <td className="p-2 border-r border-black uppercase font-bold">{item.nama_obat_obhp}</td>
+                      <td className="p-2 border-r border-black text-center font-mono">{item.jumlah}</td>
+                      <td className="p-2 border-r border-black text-right font-mono">{formatRupiah(item.harga_satuan)}</td>
+                      <td className="p-2 text-right font-mono font-bold">{formatRupiah(item.subtotal)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="border-t-2 border-black pt-3 flex justify-between items-center text-xs font-sans">
+              <span className="font-bold uppercase">Total Biaya Netto (Setelah Diskon):</span>
+              <strong className="font-mono font-black text-sm">{formatRupiah(slipPrintRecord.total_biaya)}</strong>
+            </div>
+
+            {/* BLOK TANDA TANGAN */}
+            <div className="pt-4 flex justify-between items-end font-sans text-xs">
+              <div>
+                <p className="font-bold text-slate-500">Pasien / Keluarga Pasien,</p>
+                <div className="h-16"></div>
+                <p className="font-bold underline">( _______________________________ )</p>
+              </div>
+              <div className="text-right">
+                <p className="font-bold text-slate-500">Kerinci, {new Date().toLocaleDateString('id-ID')}</p>
+                <p className="font-bold">Petugas Kasir / Apotek</p>
+                <div className="h-16"></div>
+                <p className="font-bold underline">( _______________________________ )</p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-4 border-t border-slate-200 print:hidden">
+              <button onClick={() => setSlipPrintRecord(null)} className="px-4 py-2 bg-slate-200 text-slate-700 rounded-xl text-xs font-bold cursor-pointer">Tutup</button>
+              <button onClick={() => window.print()} className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold shadow flex items-center gap-1.5 cursor-pointer">
+                <Printer className="w-4 h-4" /> Cetak Slip Resmi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL RINGKASAN KLAIM PENJAMIN */}
       {showSummaryModal && (
-        <div className="fixed inset-0 z-60 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-60 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4 print:hidden">
           <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4">
             <div className="flex items-center justify-between border-b pb-3">
               <h3 className="text-sm font-black uppercase text-slate-900 flex items-center gap-1.5">
@@ -955,18 +1021,15 @@ export default function AdminRincianObatPage() {
         </div>
       )}
 
-      {/* MODAL INSPEKSI DETAIL TRANSAKSI */}
+      {/* MODAL INSPEKSI DETAIL */}
       {detailModalRecord && (
-        <div className="fixed inset-0 z-60 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-60 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4 print:hidden">
           <div className="bg-white rounded-3xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 space-y-4 max-h-[85vh] flex flex-col relative overflow-hidden">
-            
-            {/* STEMPEL DIGITAL APPROVAL JIKA DISETUJUI */}
             {detailModalRecord.status_verifikasi === 'Disetujui' && (
               <div className="absolute right-6 top-16 border-2 border-emerald-600 text-emerald-600 px-3 py-1 rounded-xl rotate-[-12deg] font-black text-[11px] uppercase tracking-wider opacity-20 pointer-events-none select-none">
                 TERVERIFIKASI AUDIT
               </div>
             )}
-
             <div className="flex justify-between items-center border-b pb-3">
               <div>
                 <h3 className="text-sm font-black uppercase text-slate-900 flex items-center gap-1.5">
@@ -1011,16 +1074,17 @@ export default function AdminRincianObatPage() {
             <div className="pt-3 border-t flex justify-between items-center text-xs">
               <span className="font-bold text-slate-600">Total Biaya Netto: <strong className="font-mono text-slate-900">{formatRupiah(detailModalRecord.total_biaya)}</strong></span>
               <div className="flex items-center gap-2">
-                <button
-                  onClick={handlePrintDetail}
-                  className="px-3.5 py-2 bg-purple-100 hover:bg-purple-200 text-purple-800 font-bold rounded-xl cursor-pointer flex items-center gap-1.5"
+                <button 
+                  onClick={() => {
+                    const rec = detailModalRecord;
+                    setDetailModalRecord(null);
+                    setSlipPrintRecord(rec);
+                  }} 
+                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl flex items-center gap-1.5 cursor-pointer shadow"
                 >
                   <Printer className="w-4 h-4" /> Cetak Slip
                 </button>
-                <button
-                  onClick={() => setDetailModalRecord(null)}
-                  className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-xl cursor-pointer"
-                >
+                <button onClick={() => setDetailModalRecord(null)} className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-xl cursor-pointer">
                   Tutup
                 </button>
               </div>
@@ -1031,7 +1095,7 @@ export default function AdminRincianObatPage() {
 
       {/* MODAL EDIT SUPER ADMIN */}
       {editingRecord && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4 print:hidden">
           <div className="bg-white rounded-3xl max-w-2xl w-full p-6 shadow-2xl border border-slate-200 space-y-4">
             <div className="flex items-center justify-between border-b pb-3">
               <h3 className="text-sm font-black uppercase text-slate-900">Edit Rincian Obat — Super Admin Hak Akses</h3>
@@ -1044,21 +1108,11 @@ export default function AdminRincianObatPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="font-bold text-slate-700 block mb-1">Nama Pasien</label>
-                  <input
-                    type="text"
-                    value={editingRecord.nama_pasien}
-                    onChange={(e) => setEditingRecord({ ...editingRecord, nama_pasien: e.target.value })}
-                    className="w-full bg-slate-50 border rounded-xl p-2 font-bold"
-                  />
+                  <input type="text" value={editingRecord.nama_pasien} onChange={(e) => setEditingRecord({ ...editingRecord, nama_pasien: e.target.value })} className="w-full bg-slate-50 border rounded-xl p-2 font-bold" />
                 </div>
                 <div>
                   <label className="font-bold text-slate-700 block mb-1">No RM</label>
-                  <input
-                    type="text"
-                    value={editingRecord.no_rm}
-                    onChange={(e) => setEditingRecord({ ...editingRecord, no_rm: e.target.value })}
-                    className="w-full bg-slate-50 border rounded-xl p-2 font-mono"
-                  />
+                  <input type="text" value={editingRecord.no_rm} onChange={(e) => setEditingRecord({ ...editingRecord, no_rm: e.target.value })} className="w-full bg-slate-50 border rounded-xl p-2 font-mono" />
                 </div>
               </div>
 
@@ -1075,42 +1129,27 @@ export default function AdminRincianObatPage() {
                     {editItems.map((item, idx) => (
                       <tr key={idx}>
                         <td className="p-2">
-                          <input
-                            type="text"
-                            value={item.nama_obat_obhp}
-                            onChange={(e) => {
-                              const updated = [...editItems];
-                              updated[idx].nama_obat_obhp = e.target.value;
-                              setEditItems(updated);
-                            }}
-                            className="w-full border rounded p-1 font-bold"
-                          />
+                          <input type="text" value={item.nama_obat_obhp} onChange={(e) => {
+                            const updated = [...editItems];
+                            updated[idx].nama_obat_obhp = e.target.value;
+                            setEditItems(updated);
+                          }} className="w-full border rounded p-1 font-bold" />
                         </td>
                         <td className="p-2">
-                          <input
-                            type="number"
-                            value={item.jumlah}
-                            onChange={(e) => {
-                              const updated = [...editItems];
-                              updated[idx].jumlah = Number(e.target.value);
-                              updated[idx].subtotal = updated[idx].jumlah * updated[idx].harga_satuan;
-                              setEditItems(updated);
-                            }}
-                            className="w-full border rounded p-1 text-center font-mono"
-                          />
+                          <input type="number" value={item.jumlah} onChange={(e) => {
+                            const updated = [...editItems];
+                            updated[idx].jumlah = Number(e.target.value);
+                            updated[idx].subtotal = updated[idx].jumlah * updated[idx].harga_satuan;
+                            setEditItems(updated);
+                          }} className="w-full border rounded p-1 text-center font-mono" />
                         </td>
                         <td className="p-2">
-                          <input
-                            type="number"
-                            value={item.harga_satuan}
-                            onChange={(e) => {
-                              const updated = [...editItems];
-                              updated[idx].harga_satuan = Number(e.target.value);
-                              updated[idx].subtotal = updated[idx].jumlah * updated[idx].harga_satuan;
-                              setEditItems(updated);
-                            }}
-                            className="w-full border rounded p-1 text-right font-mono"
-                          />
+                          <input type="number" value={item.harga_satuan} onChange={(e) => {
+                            const updated = [...editItems];
+                            updated[idx].harga_satuan = Number(e.target.value);
+                            updated[idx].subtotal = updated[idx].jumlah * updated[idx].harga_satuan;
+                            setEditItems(updated);
+                          }} className="w-full border rounded p-1 text-right font-mono" />
                         </td>
                       </tr>
                     ))}

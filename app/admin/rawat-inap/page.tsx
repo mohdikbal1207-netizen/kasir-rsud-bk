@@ -6,7 +6,7 @@ import {
   FileText, CheckCircle2, Clock, XCircle, Search, 
   Printer, Eye, ShieldCheck, Database, Building2, ArrowLeft, X, 
   User, Calendar, AlertCircle, RefreshCw, MessageSquare, CheckSquare, Send,
-  Download, CheckSquare2, Square, Layers, Banknote, ArrowUpDown, Filter, BarChart3, RotateCcw, ChevronLeft, ChevronRight
+  Download, Square, Layers, Banknote, ArrowUpDown, Filter, BarChart3, RotateCcw, ChevronLeft, ChevronRight, Zap, Stethoscope
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import AdminHeader from '@/components/admin/AdminHeader';
@@ -38,6 +38,7 @@ interface RanapHeader {
 
 interface RanapItem {
   id: string;
+  no_reg?: string;
   kategori_biaya: string;
   nama_item: string;
   volume: number;
@@ -52,7 +53,13 @@ const formatNumber = (num: number): string => {
   return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 };
 
-// Fungsi Terbilang Otomatis untuk Format Cetak Resmi
+const calculateLengthOfStay = (masuk: string, keluar: string): number => {
+  if (!masuk || !keluar) return 1;
+  const diffTime = Math.abs(new Date(keluar).getTime() - new Date(masuk).getTime());
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  return diffDays === 0 ? 1 : diffDays;
+};
+
 const penyebut = (nilai: number): string => {
   let bilangan = Math.floor(Math.abs(nilai));
   let kata = ["", "Satu", "Dua", "Tiga", "Empat", "Lima", "Enam", "Tujuh", "Delapan", "Sembilan", "Sepuluh", "Sebelas"];
@@ -91,33 +98,31 @@ export default function AdminRanapPage() {
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [sortBy, setSortBy] = useState<string>('newest');
 
-  // State Filter Tambahan
   const [filterPenjaminan, setFilterPenjaminan] = useState<string>('ALL');
   const [filterRuang, setFilterRuang] = useState<string>('ALL');
+  const [filterDokter, setFilterDokter] = useState<string>('ALL');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
 
-  // State Pagination
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [rowsPerPage, setRowsPerPage] = useState<number>(10);
 
-  // State untuk Batch Selection
   const [selectedAdminRowIds, setSelectedAdminRowIds] = useState<string[]>([]);
   const [batchProcessing, setBatchProcessing] = useState<boolean>(false);
 
-  // State untuk Modal Detail & Cetak Rincian Biaya
   const [selectedPatient, setSelectedPatient] = useState<RanapHeader | null>(null);
   const [patientItems, setPatientItems] = useState<RanapItem[]>([]);
   const [showDetailModal, setShowDetailModal] = useState<boolean>(false);
   const [loadingItems, setLoadingItems] = useState<boolean>(false);
 
-  // State untuk Modal Catatan Admin (Revisi / Penolakan)
+  const [printMode, setPrintMode] = useState<'summary' | 'selected_summary' | 'single_bill' | null>(null);
+  const [singlePrintData, setSinglePrintData] = useState<{ header: RanapHeader; items: RanapItem[] } | null>(null);
+
   const [showActionModal, setShowActionModal] = useState<boolean>(false);
   const [actionTargetStatus, setActionTargetStatus] = useState<string>('');
   const [adminNoteInput, setAdminNoteInput] = useState<string>('');
   const [processingAction, setProcessingAction] = useState<boolean>(false);
 
-  // State untuk Notifikasi Custom
   const [modalNotif, setModalNotif] = useState<{
     show: boolean;
     type: 'success' | 'error' | 'warning' | 'info';
@@ -130,7 +135,6 @@ export default function AdminRanapPage() {
     message: ''
   });
 
-  // Listener tombol ESC
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -142,7 +146,14 @@ export default function AdminRanapPage() {
       }
     };
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+
+    const handleAfterPrint = () => setPrintMode(null);
+    window.addEventListener('afterprint', handleAfterPrint);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('afterprint', handleAfterPrint);
+    };
   }, [showActionModal, showDetailModal]);
 
   const fetchRanapData = async () => {
@@ -150,14 +161,20 @@ export default function AdminRanapPage() {
     try {
       const { data: headers, error: headerErr } = await supabase
         .from('ranap_billing_header')
-        .select('*, ranap_billing_items(jumlah_total, ditanggung_pihak3, selisih_bayar)')
+        .select('*')
         .order('created_at', { ascending: false });
 
       if (headerErr) throw headerErr;
 
+      const { data: allItems, error: itemsErr } = await supabase
+        .from('ranap_billing_items')
+        .select('no_reg, jumlah_total, ditanggung_pihak3, selisih_bayar');
+
+      if (itemsErr) throw itemsErr;
+
       if (headers) {
         const formatted = headers.map((h: any) => {
-          const matchingItems = h.ranap_billing_items || [];
+          const matchingItems = (allItems || []).filter((i: any) => i.no_reg === h.no_reg);
           const total_biaya = matchingItems.reduce((acc: number, curr: any) => acc + (curr.jumlah_total || 0), 0);
           const total_ditanggung = matchingItems.reduce((acc: number, curr: any) => acc + (curr.ditanggung_pihak3 || 0), 0);
           const total_selisih = matchingItems.reduce((acc: number, curr: any) => acc + (curr.selisih_bayar || 0), 0);
@@ -173,7 +190,7 @@ export default function AdminRanapPage() {
         setPatientList(formatted);
       }
     } catch (err: any) {
-      console.error('Gagal mengambil data ranap:', err);
+      console.error('Gagal mengambil data ranap:', err?.message || JSON.stringify(err));
     } finally {
       setLoading(false);
     }
@@ -203,10 +220,76 @@ export default function AdminRanapPage() {
     }
   };
 
-  const handleExecuteStatusUpdate = async () => {
+  const handlePrintSelectedSummary = () => {
+    if (selectedAdminRowIds.length === 0) {
+      setModalNotif({
+        show: true,
+        type: 'warning',
+        title: 'Tidak Ada Data Terpilih',
+        message: 'Silakan centang minimal satu data pasien pada tabel untuk mencetak rekapitulasi terpilih.'
+      });
+      return;
+    }
+
+    setPrintMode('selected_summary');
+    setTimeout(() => {
+      window.print();
+    }, 500);
+  };
+
+  const handlePrintSummaryReport = () => {
+    if (filteredPatients.length === 0) {
+      setModalNotif({
+        show: true,
+        type: 'warning',
+        title: 'Data Kosong',
+        message: 'Tidak ada data rekapitulasi untuk dicetak.'
+      });
+      return;
+    }
+
+    setPrintMode('summary');
+    setTimeout(() => {
+      window.print();
+    }, 500);
+  };
+
+  const handlePrintSingleBill = async (patient: RanapHeader) => {
+    try {
+      const { data: itemsData, error } = await supabase
+        .from('ranap_billing_items')
+        .select('*')
+        .eq('no_reg', patient.no_reg);
+
+      if (error) throw error;
+
+      setSinglePrintData({
+        header: patient,
+        items: itemsData || []
+      });
+      setPrintMode('single_bill');
+
+      setTimeout(() => {
+        window.print();
+      }, 500);
+    } catch (err: any) {
+      console.error('Gagal memuat rincian nota:', err);
+      setModalNotif({
+        show: true,
+        type: 'error',
+        title: 'Gagal Mencetak Nota',
+        message: 'Terjadi kendala sistem saat memuat rincian: ' + err.message
+      });
+    }
+  };
+
+  const handleExecuteStatusUpdate = async (overrideStatus?: string, overrideNote?: string) => {
     if (!selectedPatient) return;
 
-    if ((actionTargetStatus === 'NEEDS_REVISION' || actionTargetStatus === 'REJECTED') && !adminNoteInput.trim()) {
+    const targetStatus = overrideStatus || actionTargetStatus;
+    const targetNote = overrideNote !== undefined ? overrideNote : (adminNoteInput.trim() || null);
+
+    if ((targetStatus === 'NEEDS_REVISION' || targetStatus === 'REJECTED') && !targetNote) {
       setModalNotif({
         show: true,
         type: 'warning',
@@ -219,8 +302,8 @@ export default function AdminRanapPage() {
     setProcessingAction(true);
     try {
       const updatePayload: any = {
-        status_verifikasi: actionTargetStatus,
-        catatan_admin: adminNoteInput.trim() || null
+        status_verifikasi: targetStatus,
+        catatan_admin: targetNote
       };
 
       const { error } = await supabase
@@ -234,14 +317,14 @@ export default function AdminRanapPage() {
         show: true,
         type: 'success',
         title: 'Status Berhasil Diperbarui',
-        message: `Status tagihan ${selectedPatient.no_reg} berhasil diubah menjadi ${actionTargetStatus}.`
+        message: `Status tagihan ${selectedPatient.no_reg} berhasil diubah menjadi ${targetStatus}.`
       });
 
       setShowActionModal(false);
       setAdminNoteInput('');
       fetchRanapData();
 
-      setSelectedPatient(prev => prev ? { ...prev, status_verifikasi: actionTargetStatus, catatan_admin: updatePayload.catatan_admin } : null);
+      setSelectedPatient(prev => prev ? { ...prev, status_verifikasi: targetStatus, catatan_admin: updatePayload.catatan_admin } : null);
 
     } catch (err: any) {
       console.error('Gagal memperbarui status:', err);
@@ -256,7 +339,6 @@ export default function AdminRanapPage() {
     }
   };
 
-  // Batch Verification Handler
   const handleBatchVerify = async () => {
     if (selectedAdminRowIds.length === 0) return;
 
@@ -306,14 +388,15 @@ export default function AdminRanapPage() {
     }
 
     let csvContent = "data:text/csv;charset=utf-8,";
-    csvContent += "No. Reg,Nama Pasien,NIK,Ruangan,Penjaminan,Status Verifikasi,Total Biaya (Rp),Ditanggung BPJS (Rp),Selisih Umum (Rp)\n";
-    
+    csvContent += "No. Reg,Nama Pasien,NIK,Ruangan,Dokter,Penjaminan,Status Verifikasi,Total Biaya (Rp),Ditanggung BPJS (Rp),Selisih Umum (Rp)\n";
+     
     filteredPatients.forEach(p => {
       const row = [
         p.no_reg,
         `"${p.nama_pasien}"`,
         p.nik_pasien || '',
         `"${p.ruang || '-'}"`,
+        `"${p.dokter_merawat || '-'}"`,
         p.jenis_penjaminan || 'UMUM',
         p.status_verifikasi || 'PENDING_VERIFIKASI',
         p.total_biaya || 0,
@@ -333,15 +416,24 @@ export default function AdminRanapPage() {
   };
 
   const uniqueRooms = Array.from(new Set(patientList.map(p => p.ruang).filter(Boolean)));
+  const uniqueDoctors = Array.from(new Set(patientList.map(p => p.dokter_merawat).filter(Boolean)));
 
   const handleResetFilters = () => {
     setSearchTerm('');
     setFilterStatus('ALL');
     setFilterPenjaminan('ALL');
     setFilterRuang('ALL');
+    setFilterDokter('ALL');
     setStartDate('');
     setEndDate('');
     setSortBy('newest');
+    setCurrentPage(1);
+  };
+
+  const handleFilterToday = () => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    setStartDate(todayStr);
+    setEndDate(todayStr);
     setCurrentPage(1);
   };
 
@@ -349,11 +441,13 @@ export default function AdminRanapPage() {
     const matchesSearch = 
       p.nama_pasien.toLowerCase().includes(searchTerm.toLowerCase()) ||
       p.no_reg.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      p.ruang?.toLowerCase().includes(searchTerm.toLowerCase());
+      p.ruang?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      p.dokter_merawat?.toLowerCase().includes(searchTerm.toLowerCase());
      
     const matchesFilter = filterStatus === 'ALL' || (p.status_verifikasi || 'PENDING_VERIFIKASI') === filterStatus;
     const matchesPenjaminan = filterPenjaminan === 'ALL' || (p.jenis_penjaminan || 'UMUM / MANDIRI').includes(filterPenjaminan);
     const matchesRuang = filterRuang === 'ALL' || p.ruang === filterRuang;
+    const matchesDokter = filterDokter === 'ALL' || p.dokter_merawat === filterDokter;
 
     let matchesDate = true;
     if (startDate && p.created_at) {
@@ -365,7 +459,7 @@ export default function AdminRanapPage() {
       matchesDate = matchesDate && new Date(p.created_at) <= endDateTime;
     }
 
-    return matchesSearch && matchesFilter && matchesPenjaminan && matchesRuang && matchesDate;
+    return matchesSearch && matchesFilter && matchesPenjaminan && matchesRuang && matchesDokter && matchesDate;
   }).sort((a, b) => {
     if (sortBy === 'highest_cost') {
       return (b.total_biaya || 0) - (a.total_biaya || 0);
@@ -377,6 +471,8 @@ export default function AdminRanapPage() {
       return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
     }
   });
+
+  const selectedPatientsList = patientList.filter(p => selectedAdminRowIds.includes(p.no_reg));
 
   const totalPages = Math.ceil(filteredPatients.length / rowsPerPage) || 1;
   const paginatedPatients = filteredPatients.slice((currentPage - 1) * rowsPerPage, currentPage * rowsPerPage);
@@ -448,19 +544,34 @@ export default function AdminRanapPage() {
       <style jsx global>{`
         @media print {
           @page {
-            size: A4;
-            margin: 8mm;
+            size: A4 portrait;
+            margin: 0mm !important;
           }
-          body {
+          body, html {
             background: white !important;
             color: black !important;
-            -webkit-print-color-adjust: exact;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            width: 100% !important;
           }
-          .print\\:hidden {
+          .print\:hidden {
             display: none !important;
           }
-          .print\\:block {
+          .print\:block {
             display: block !important;
+            position: absolute !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 100% !important;
+            margin: 0 !important;
+            padding: 6mm 6mm 0 6mm !important;
+            background: white !important;
+          }
+          .page-break {
+            page-break-after: always;
+            break-after: page;
           }
         }
       `}</style>
@@ -488,7 +599,6 @@ export default function AdminRanapPage() {
         </div>
       )}
 
-      {/* Modal Input Catatan Admin (Diperbarui z-[70] agar selalu tampil di atas modal detail) */}
       {showActionModal && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm animate-fade-in print:hidden">
           <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-lg w-full overflow-hidden flex flex-col">
@@ -524,7 +634,7 @@ export default function AdminRanapPage() {
                 Batal
               </button>
               <button
-                onClick={handleExecuteStatusUpdate}
+                onClick={() => handleExecuteStatusUpdate()}
                 disabled={processingAction}
                 className={`px-5 py-2.5 text-white rounded-xl text-xs font-bold transition cursor-pointer shadow-md ${
                   actionTargetStatus === 'REJECTED' ? 'bg-rose-600 hover:bg-rose-500' : 'bg-amber-600 hover:bg-amber-500'
@@ -545,24 +655,32 @@ export default function AdminRanapPage() {
         />
       </div>
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-8 space-y-6 print:p-0 print:m-0 print:max-w-none">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-8 space-y-6 print:hidden">
         
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 print:hidden">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
             <h1 className="text-xl font-black text-slate-900 tracking-tight">Verifikasi & Data Pasien Rawat Inap</h1>
             <p className="text-xs text-slate-500">Kelola dan verifikasi rincian biaya perawatan pasien rawat inap yang diinput kasir.</p>
           </div>
-          <button
-            onClick={() => router.back()}
-            className="flex items-center space-x-2 bg-white hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-xl text-xs font-bold border border-slate-200 transition shadow-sm cursor-pointer"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            <span>Kembali</span>
-          </button>
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={handleFilterToday}
+              className="flex items-center space-x-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 px-3.5 py-2 rounded-xl text-xs font-bold border border-emerald-200 transition shadow-sm cursor-pointer"
+            >
+              <Zap className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Filter Hari Ini</span>
+            </button>
+            <button
+              onClick={() => router.back()}
+              className="flex items-center space-x-2 bg-white hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-xl text-xs font-bold border border-slate-200 transition shadow-sm cursor-pointer"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span>Kembali</span>
+            </button>
+          </div>
         </div>
 
-        {/* Progress Bar & Financial Summary Cards */}
-        <div className="bg-white p-5 rounded-3xl shadow-md border border-slate-200 space-y-4 print:hidden">
+        <div className="bg-white p-5 rounded-3xl shadow-md border border-slate-200 space-y-4">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
             <div className="flex items-center space-x-2">
               <BarChart3 className="w-5 h-5 text-emerald-600" />
@@ -581,7 +699,7 @@ export default function AdminRanapPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 print:hidden">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div 
             onClick={() => { setFilterStatus('ALL'); setCurrentPage(1); }}
             className="bg-slate-900 text-white p-5 rounded-3xl shadow-md border border-slate-800 flex flex-col justify-between cursor-pointer hover:bg-slate-800 transition"
@@ -625,8 +743,7 @@ export default function AdminRanapPage() {
           </div>
         </div>
 
-        {/* Tab Filter Status */}
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 print:hidden">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
           {[
             { id: 'ALL', label: 'Semua Data', color: 'bg-slate-900 text-white' },
             { id: 'PENDING_VERIFIKASI', label: 'Menunggu', color: 'bg-sky-700 text-white' },
@@ -653,15 +770,14 @@ export default function AdminRanapPage() {
           ))}
         </div>
 
-        {/* Toolbar */}
-        <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-200 space-y-3 print:hidden">
+        <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-200 space-y-3">
           <div className="flex flex-col lg:flex-row items-center justify-between gap-3">
             
             <div className="relative w-full lg:w-64">
               <Search className="absolute left-3 top-3 w-4 h-4 text-slate-400" />
               <input 
                 type="text" 
-                placeholder="Cari pasien / No. Reg..."
+                placeholder="Cari pasien / No. Reg / Dokter..."
                 value={searchTerm}
                 onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
                 className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 font-medium bg-slate-50/50"
@@ -677,6 +793,17 @@ export default function AdminRanapPage() {
                 <option value="ALL">Semua Ruangan</option>
                 {uniqueRooms.map((room, idx) => (
                   <option key={idx} value={room}>{room}</option>
+                ))}
+              </select>
+
+              <select
+                value={filterDokter}
+                onChange={(e) => { setFilterDokter(e.target.value); setCurrentPage(1); }}
+                className="p-2.5 rounded-xl border border-slate-300 text-xs bg-slate-50 font-medium text-slate-700 cursor-pointer focus:ring-2 focus:ring-emerald-500"
+              >
+                <option value="ALL">Semua Dokter</option>
+                {uniqueDoctors.map((doc, idx) => (
+                  <option key={idx} value={doc}>{doc}</option>
                 ))}
               </select>
 
@@ -736,7 +863,7 @@ export default function AdminRanapPage() {
               <span className="text-xs text-slate-500 font-medium">
                 Menampilkan <strong className="text-slate-800">{filteredPatients.length}</strong> data sesuai filter aktif.
               </span>
-              
+               
               <div className="flex items-center space-x-1 text-xs text-slate-600">
                 <span>Baris:</span>
                 <select 
@@ -751,13 +878,31 @@ export default function AdminRanapPage() {
               </div>
             </div>
 
-            <div className="flex items-center space-x-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 onClick={handleExportAdminCSV}
                 className="flex items-center space-x-1.5 bg-emerald-700 hover:bg-emerald-600 text-white px-3.5 py-2 rounded-xl text-xs font-bold transition shadow-sm cursor-pointer"
               >
                 <Download className="w-3.5 h-3.5" />
                 <span>Ekspor Rekap Excel</span>
+              </button>
+
+              <button
+                onClick={handlePrintSelectedSummary}
+                disabled={selectedAdminRowIds.length === 0}
+                className="flex items-center space-x-1.5 bg-indigo-700 hover:bg-indigo-600 text-white px-3.5 py-2 rounded-xl text-xs font-bold transition shadow-sm cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>Cetak Rekap Terpilih ({selectedAdminRowIds.length})</span>
+              </button>
+
+              <button
+                onClick={handlePrintSummaryReport}
+                disabled={filteredPatients.length === 0}
+                className="flex items-center space-x-1.5 bg-slate-800 hover:bg-slate-700 text-white px-3.5 py-2 rounded-xl text-xs font-bold transition shadow-sm cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>Cetak Semua Rekapan Pasien ({filteredPatients.length})</span>
               </button>
 
               {selectedAdminRowIds.length > 0 && (
@@ -774,8 +919,7 @@ export default function AdminRanapPage() {
           </div>
         </div>
 
-        {/* Tabel Data Utama */}
-        <div className="bg-white rounded-3xl shadow-xl border border-slate-200 overflow-hidden print:hidden flex flex-col">
+        <div className="bg-white rounded-3xl shadow-xl border border-slate-200 overflow-hidden flex flex-col">
           <div className="overflow-x-auto flex-1">
             <table className="w-full text-left border-collapse text-xs">
               <thead>
@@ -790,7 +934,8 @@ export default function AdminRanapPage() {
                   </th>
                   <th className="p-3.5">No. Reg / Tgl</th>
                   <th className="p-3.5">Nama Pasien</th>
-                  <th className="p-3.5">Ruang / Kelas</th>
+                  <th className="p-3.5">Ruang & Dokter</th>
+                  <th className="p-3.5 text-center">Lama Rawat</th>
                   <th className="p-3.5">Penjaminan</th>
                   <th className="p-3.5 text-right">Total Biaya</th>
                   <th className="p-3.5 text-center">Status Verifikasi</th>
@@ -799,16 +944,27 @@ export default function AdminRanapPage() {
               </thead>
               <tbody className="divide-y divide-slate-200 text-slate-700">
                 {loading ? (
-                  <tr>
-                    <td colSpan={8} className="p-8 text-center text-slate-400">Memuat data dari database...</td>
-                  </tr>
+                  Array.from({ length: 5 }).map((_, idx) => (
+                    <tr key={`skeleton-${idx}`} className="animate-pulse">
+                      <td className="p-3.5 text-center"><div className="w-4 h-4 bg-slate-200 rounded mx-auto"></div></td>
+                      <td className="p-3.5"><div className="w-24 h-4 bg-slate-200 rounded mb-1"></div><div className="w-16 h-3 bg-slate-100 rounded"></div></td>
+                      <td className="p-3.5"><div className="w-32 h-4 bg-slate-200 rounded mb-1"></div><div className="w-20 h-3 bg-slate-100 rounded"></div></td>
+                      <td className="p-3.5"><div className="w-24 h-4 bg-slate-200 rounded mb-1"></div><div className="w-20 h-3 bg-slate-100 rounded"></div></td>
+                      <td className="p-3.5 text-center"><div className="w-12 h-5 bg-slate-200 rounded mx-auto"></div></td>
+                      <td className="p-3.5"><div className="w-16 h-5 bg-slate-200 rounded"></div></td>
+                      <td className="p-3.5 text-right"><div className="w-24 h-4 bg-slate-200 rounded ml-auto"></div></td>
+                      <td className="p-3.5 text-center"><div className="w-20 h-5 bg-slate-200 rounded mx-auto"></div></td>
+                      <td className="p-3.5 text-center"><div className="w-20 h-7 bg-slate-200 rounded mx-auto"></div></td>
+                    </tr>
+                  ))
                 ) : paginatedPatients.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="p-8 text-center text-slate-400">Tidak ada data tagihan yang cocok dengan filter saat ini.</td>
+                    <td colSpan={9} className="p-8 text-center text-slate-400">Tidak ada data tagihan yang cocok dengan filter saat ini.</td>
                   </tr>
                 ) : (
                   paginatedPatients.map((patient) => {
                     const isChecked = selectedAdminRowIds.includes(patient.no_reg);
+                    const losDays = calculateLengthOfStay(patient.masuk_tgl, patient.keluar_tgl);
                     return (
                       <tr key={patient.id} className={`hover:bg-slate-50 transition ${isChecked ? 'bg-emerald-50/40' : ''}`}>
                         <td className="p-3.5 text-center">
@@ -827,7 +983,15 @@ export default function AdminRanapPage() {
                           <p className="font-bold text-slate-900 uppercase">{patient.nama_pasien}</p>
                           <p className="text-[10px] text-slate-400">NIK: {patient.nik_pasien || '-'}</p>
                         </td>
-                        <td className="p-3.5 font-semibold text-slate-800">{patient.ruang}</td>
+                        <td className="p-3.5">
+                          <p className="font-semibold text-slate-800">{patient.ruang}</p>
+                          <p className="text-[10px] text-emerald-700 flex items-center gap-1"><Stethoscope className="w-3 h-3" /> {patient.dokter_merawat || '-'}</p>
+                        </td>
+                        <td className="p-3.5 text-center">
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-slate-100 text-slate-800 border border-slate-200 font-mono">
+                            {losDays} Hari
+                          </span>
+                        </td>
                         <td className="p-3.5">
                           <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase bg-slate-100 text-slate-800 border border-slate-200">
                             {patient.jenis_penjaminan || 'UMUM'}
@@ -844,13 +1008,22 @@ export default function AdminRanapPage() {
                             </span>
                           )}
                         </td>
-                        <td className="p-3.5 text-center">
+                        <td className="p-3.5 text-center space-x-1">
                           <button
                             onClick={() => handleOpenDetail(patient)}
-                            className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold px-3 py-1.5 rounded-xl transition cursor-pointer inline-flex items-center gap-1 border border-emerald-200 shadow-sm"
+                            className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold px-2.5 py-1.5 rounded-xl transition cursor-pointer inline-flex items-center gap-1 border border-emerald-200 shadow-sm"
+                            title="Periksa & Verifikasi"
                           >
                             <Eye className="w-3.5 h-3.5 text-emerald-600" />
-                            <span>Periksa & Verifikasi</span>
+                            <span>Periksa</span>
+                          </button>
+                          <button
+                            onClick={() => handlePrintSingleBill(patient)}
+                            className="bg-indigo-50 hover:bg-indigo-100 text-indigo-800 font-bold px-2.5 py-1.5 rounded-xl transition cursor-pointer inline-flex items-center gap-1 border border-indigo-200 shadow-sm"
+                            title="Cetak Nota Perincian Pasien Ini"
+                          >
+                            <Printer className="w-3.5 h-3.5 text-indigo-600" />
+                            <span>Cetak</span>
                           </button>
                         </td>
                       </tr>
@@ -861,7 +1034,6 @@ export default function AdminRanapPage() {
             </table>
           </div>
 
-          {/* Pagination */}
           <div className="p-4 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3">
             <span className="text-xs text-slate-500 font-medium">
               Halaman <strong className="text-slate-800">{currentPage}</strong> dari <strong className="text-slate-800">{totalPages}</strong> (Total {filteredPatients.length} data)
@@ -891,7 +1063,273 @@ export default function AdminRanapPage() {
 
       </main>
 
-      {/* MODAL DETAIL & VERIFIKASI ADMIN */}
+      {/* ========================================================= */}
+      {/* --- PRINT CONTAINER 1: LAPORAN REKAPITULASI KESELURUHAN --- */}
+      {/* ========================================================= */}
+      {printMode === 'summary' && (
+        <div className="hidden print:block font-sans text-slate-900 text-[10px] m-0 p-0 space-y-2 w-full">
+          
+          <div className="flex items-center justify-between border-b-4 border-double border-slate-900 pb-2 mb-2 px-1">
+            <div className="w-14 h-14 flex-shrink-0 flex items-center justify-center">
+              <img src="/logo-pemkab.png" alt="Logo Pemkab Kerinci" className="w-12 h-12 object-contain" />
+            </div>
+            <div className="flex-1 text-center px-2">
+              <h4 className="text-[10px] font-bold uppercase tracking-wider">PEMERINTAH KABUPATEN KERINCI</h4>
+              <h3 className="text-[10px] font-bold uppercase tracking-wider">DINAS KESEHATAN</h3>
+              <h2 className="text-xs font-black uppercase tracking-tight text-emerald-900">RSUD KELAS D BUKIT KERMAN</h2>
+              <p className="text-[8px] text-slate-600 mt-0.5">Desa Pondok, Kecamatan Bukit Kerman, Kode Pos: 37176 | Email: rsudbukitkerman@gmail.com</p>
+            </div>
+            <div className="w-14 h-14 flex-shrink-0 flex items-center justify-center">
+              <img src="/logo-rsud.jpeg" alt="Logo RSUD Bukit Kerman" className="w-12 h-12 object-contain" />
+            </div>
+          </div>
+
+          <div className="text-center font-bold underline uppercase text-[11px] tracking-wide mb-1">
+            LAPORAN REKAPITULASI TAGIHAN PERAWATAN PASIEN RAWAT INAP
+          </div>
+          <div className="text-center text-[8px] text-slate-500 mb-2 font-mono">
+            Dicetak pada: {new Date().toLocaleString('id-ID')}
+          </div>
+
+          <table className="w-full border-collapse border border-slate-800 text-[9px] mb-3">
+            <thead>
+              <tr className="bg-slate-200 text-slate-900 font-bold uppercase text-center border-b border-slate-800">
+                <th className="border border-slate-800 p-1 w-8">No</th>
+                <th className="border border-slate-800 p-1">No. Reg</th>
+                <th className="border border-slate-800 p-1 text-left">Nama Pasien / NIK</th>
+                <th className="border border-slate-800 p-1">Ruang / Dokter</th>
+                <th className="border border-slate-800 p-1">Penjaminan</th>
+                <th className="border border-slate-800 p-1">Status</th>
+                <th className="border border-slate-800 p-1 text-right">Total Biaya (Rp)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredPatients.map((p, idx) => (
+                <tr key={p.id || idx} className="border-b border-slate-300">
+                  <td className="border border-slate-800 p-1 text-center">{idx + 1}</td>
+                  <td className="border border-slate-800 p-1 text-center font-mono">{p.no_reg}</td>
+                  <td className="border border-slate-800 p-1 font-bold uppercase">
+                    {p.nama_pasien} <span className="block font-normal text-[8px] text-slate-500 font-mono">NIK: {p.nik_pasien || '-'}</span>
+                  </td>
+                  <td className="border border-slate-800 p-1 text-center">
+                    {p.ruang} <span className="block text-[7px] text-slate-600">{p.dokter_merawat}</span>
+                  </td>
+                  <td className="border border-slate-800 p-1 text-center">{p.jenis_penjaminan || 'UMUM'}</td>
+                  <td className="border border-slate-800 p-1 text-center font-bold">{p.status_verifikasi || 'PENDING'}</td>
+                  <td className="border border-slate-800 p-1 text-right font-mono font-bold">{formatNumber(p.total_biaya || 0)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="bg-slate-100 font-bold">
+                <td colSpan={6} className="border border-slate-800 p-1.5 text-right uppercase">TOTAL AKUMULASI KESELURUHAN :</td>
+                <td className="border border-slate-800 p-1.5 text-right font-mono text-emerald-900">
+                  Rp {formatNumber(filteredPatients.reduce((sum, curr) => sum + (curr.total_biaya || 0), 0))}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+
+          <div className="flex justify-between pt-2 text-[8px] italic text-slate-600">
+            <span>* Dokumen Rekapitulasi Sah tercetak otomatis melalui Sistem SIMRS RSUD Bukit Kerman.</span>
+            <span>Validasi Tgl: {new Date().toLocaleDateString('id-ID')}</span>
+          </div>
+
+          <div className="flex justify-end pt-3 text-center text-[9px] page-break-inside-avoid">
+            <div className="w-52">
+              <p className="font-medium">Bukit Kerman, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
+              <p className="font-medium">Mengetahui, Admin / Direktur RSUD</p>
+              <div className="h-12"></div>
+              <p className="font-bold underline">( .................................................... )</p>
+            </div>
+          </div>
+
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* --- PRINT CONTAINER 2: LAPORAN REKAPITULASI TERPILIH --- */}
+      {/* ========================================================= */}
+      {printMode === 'selected_summary' && (
+        <div className="hidden print:block font-sans text-slate-900 text-[10px] m-0 p-0 space-y-2 w-full">
+          
+          <div className="flex items-center justify-between border-b-4 border-double border-slate-900 pb-2 mb-2 px-1">
+            <div className="w-14 h-14 flex-shrink-0 flex items-center justify-center">
+              <img src="/logo-pemkab.png" alt="Logo Pemkab Kerinci" className="w-12 h-12 object-contain" />
+            </div>
+            <div className="flex-1 text-center px-2">
+              <h4 className="text-[10px] font-bold uppercase tracking-wider">PEMERINTAH KABUPATEN KERINCI</h4>
+              <h3 className="text-[10px] font-bold uppercase tracking-wider">DINAS KESEHATAN</h3>
+              <h2 className="text-xs font-black uppercase tracking-tight text-emerald-900">RSUD KELAS D BUKIT KERMAN</h2>
+              <p className="text-[8px] text-slate-600 mt-0.5">Desa Pondok, Kecamatan Bukit Kerman, Kode Pos: 37176 | Email: rsudbukitkerman@gmail.com</p>
+            </div>
+            <div className="w-14 h-14 flex-shrink-0 flex items-center justify-center">
+              <img src="/logo-rsud.jpeg" alt="Logo RSUD Bukit Kerman" className="w-12 h-12 object-contain" />
+            </div>
+          </div>
+
+          <div className="text-center font-bold underline uppercase text-[11px] tracking-wide mb-1">
+            LAPORAN REKAPITULASI TAGIHAN TERPILIH (SELECTED PATIENTS)
+          </div>
+          <div className="text-center text-[8px] text-slate-500 mb-2 font-mono">
+            Dicetak pada: {new Date().toLocaleString('id-ID')}
+          </div>
+
+          <table className="w-full border-collapse border border-slate-800 text-[9px] mb-3">
+            <thead>
+              <tr className="bg-slate-200 text-slate-900 font-bold uppercase text-center border-b border-slate-800">
+                <th className="border border-slate-800 p-1 w-8">No</th>
+                <th className="border border-slate-800 p-1">No. Reg</th>
+                <th className="border border-slate-800 p-1 text-left">Nama Pasien / NIK</th>
+                <th className="border border-slate-800 p-1">Ruangan</th>
+                <th className="border border-slate-800 p-1">Penjaminan</th>
+                <th className="border border-slate-800 p-1">Status</th>
+                <th className="border border-slate-800 p-1 text-right">Total Biaya (Rp)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {selectedPatientsList.map((p, idx) => (
+                <tr key={p.id || idx} className="border-b border-slate-300">
+                  <td className="border border-slate-800 p-1 text-center">{idx + 1}</td>
+                  <td className="border border-slate-800 p-1 text-center font-mono">{p.no_reg}</td>
+                  <td className="border border-slate-800 p-1 font-bold uppercase">
+                    {p.nama_pasien} <span className="block font-normal text-[8px] text-slate-500 font-mono">NIK: {p.nik_pasien || '-'}</span>
+                  </td>
+                  <td className="border border-slate-800 p-1 text-center">{p.ruang}</td>
+                  <td className="border border-slate-800 p-1 text-center">{p.jenis_penjaminan || 'UMUM'}</td>
+                  <td className="border border-slate-800 p-1 text-center font-bold">{p.status_verifikasi || 'PENDING'}</td>
+                  <td className="border border-slate-800 p-1 text-right font-mono font-bold">{formatNumber(p.total_biaya || 0)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="bg-slate-100 font-bold">
+                <td colSpan={6} className="border border-slate-800 p-1.5 text-right uppercase">TOTAL AKUMULASI TERPILIH :</td>
+                <td className="border border-slate-800 p-1.5 text-right font-mono text-emerald-900">
+                  Rp {formatNumber(selectedPatientsList.reduce((sum, curr) => sum + (curr.total_biaya || 0), 0))}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+
+          <div className="flex justify-end pt-3 text-center text-[9px] page-break-inside-avoid">
+            <div className="w-52">
+              <p className="font-medium">Bukit Kerman, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
+              <p className="font-medium">Mengetahui, Admin / Direktur RSUD</p>
+              <div className="h-12"></div>
+              <p className="font-bold underline">( .................................................... )</p>
+            </div>
+          </div>
+
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* --- PRINT CONTAINER 3: NOTA RINCIAN SINGLE PASIEN --- */}
+      {/* ========================================================= */}
+      {printMode === 'single_bill' && singlePrintData && (
+        <div className="hidden print:block font-sans text-slate-900 text-[10px] m-0 p-0 space-y-2 w-full">
+          
+          <div className="flex items-center justify-between border-b-4 border-double border-slate-900 pb-2 mb-2 px-1">
+            <div className="w-14 h-14 flex-shrink-0 flex items-center justify-center">
+              <img src="/logo-pemkab.png" alt="Logo Pemkab Kerinci" className="w-12 h-12 object-contain" />
+            </div>
+            <div className="flex-1 text-center px-2">
+              <h4 className="text-[10px] font-bold uppercase tracking-wider">PEMERINTAH KABUPATEN KERINCI</h4>
+              <h3 className="text-[10px] font-bold uppercase tracking-wider">DINAS KESEHATAN</h3>
+              <h2 className="text-xs font-black uppercase tracking-tight text-emerald-900">RSUD KELAS D BUKIT KERMAN</h2>
+              <p className="text-[8px] text-slate-600 mt-0.5">Desa Pondok, Kecamatan Bukit Kerman, Kode Pos: 37176 | Email: rsudbukitkerman@gmail.com</p>
+            </div>
+            <div className="w-14 h-14 flex-shrink-0 flex items-center justify-center">
+              <img src="/logo-rsud.jpeg" alt="Logo RSUD Bukit Kerman" className="w-12 h-12 object-contain" />
+            </div>
+          </div>
+
+          <div className="text-center font-bold underline uppercase text-[11px] tracking-wide mb-1">
+            PERINCIAN BIAYA PERAWATAN PASIEN RAWAT INAP
+          </div>
+          <div className="text-center text-[8px] text-slate-500 mb-2 font-mono">
+            Dicetak pada: {new Date().toLocaleString('id-ID')}
+          </div>
+
+          <div className="grid grid-cols-2 gap-x-4 border border-slate-800 p-2 rounded text-[9px] mb-2 bg-slate-50/50">
+            <div className="space-y-0.5">
+              <div className="flex"><span className="w-24 font-bold">Nama Pasien</span><span className="mr-2">:</span><span className="font-semibold uppercase">{singlePrintData.header.nama_pasien}</span></div>
+              <div className="flex"><span className="w-24 font-bold">NIK Pasien</span><span className="mr-2">:</span><span className="font-mono">{singlePrintData.header.nik_pasien || '-'}</span></div>
+              <div className="flex"><span className="w-24 font-bold">Umur & Alamat</span><span className="mr-2">:</span><span>{singlePrintData.header.umur || '-'} • {singlePrintData.header.alamat || '-'}</span></div>
+              <div className="flex"><span className="w-24 font-bold">Diagnosa Medis</span><span className="mr-2">:</span><span>{singlePrintData.header.diagnosa || '-'}</span></div>
+            </div>
+            <div className="space-y-0.5">
+              <div className="flex"><span className="w-24 font-bold">Tanggal Masuk</span><span className="mr-2">:</span><span>{singlePrintData.header.masuk_tgl ? new Date(singlePrintData.header.masuk_tgl).toLocaleDateString('id-ID') : '-'}</span></div>
+              <div className="flex"><span className="w-24 font-bold">Tanggal Keluar</span><span className="mr-2">:</span><span>{singlePrintData.header.keluar_tgl ? new Date(singlePrintData.header.keluar_tgl).toLocaleDateString('id-ID') : '-'}</span></div>
+              <div className="flex"><span className="w-24 font-bold">Ruangan / LOS</span><span className="mr-2">:</span><span className="font-semibold">{singlePrintData.header.ruang} ({calculateLengthOfStay(singlePrintData.header.masuk_tgl, singlePrintData.header.keluar_tgl)} Hari)</span></div>
+              <div className="flex"><span className="w-24 font-bold">No. Reg / RM</span><span className="mr-2">:</span><span className="font-mono font-bold">{singlePrintData.header.no_reg}</span></div>
+            </div>
+          </div>
+
+          <table className="w-full border-collapse border border-slate-800 text-[9px] mb-2">
+            <thead>
+              <tr className="bg-slate-200 text-slate-900 font-bold uppercase text-center border-b border-slate-800">
+                <th className="border border-slate-800 p-1 w-6">No</th>
+                <th className="border border-slate-800 p-1 text-left">Uraian Biaya &amp; Item</th>
+                <th className="border border-slate-800 p-1 w-8">Vol</th>
+                <th className="border border-slate-800 p-1 text-right">Tarif (Rp)</th>
+                <th className="border border-slate-800 p-1 text-right">Jumlah (Rp)</th>
+                <th className="border border-slate-800 p-1 text-right">Ditanggung (Pihak 3)</th>
+                <th className="border border-slate-800 p-1 text-right">Selisih (Bayar)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {singlePrintData.items.map((it, idx) => (
+                <tr key={`${it.id || 'item'}-${idx}`} className="border-b border-slate-300">
+                  <td className="border border-slate-800 p-1 text-center">{idx + 1}</td>
+                  <td className="border border-slate-800 p-1">
+                    <span className="font-bold">{it.kategori_biaya}</span> — <span>{it.nama_item}</span>
+                  </td>
+                  <td className="border border-slate-800 p-1 text-center font-mono">{it.volume}</td>
+                  <td className="border border-slate-800 p-1 text-right font-mono">{formatNumber(it.tarif_satuan)}</td>
+                  <td className="border border-slate-800 p-1 text-right font-mono font-bold">{formatNumber(it.jumlah_total)}</td>
+                  <td className="border border-slate-800 p-1 text-right font-mono">{formatNumber(it.ditanggung_pihak3)}</td>
+                  <td className="border border-slate-800 p-1 text-right font-mono">{formatNumber(it.selisih_bayar)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="bg-slate-100 font-bold">
+                <td colSpan={4} className="border border-slate-800 p-1 text-right uppercase">JUMLAH TOTAL KESELURUHAN :</td>
+                <td className="border border-slate-800 p-1 text-right font-mono text-emerald-900">Rp {formatNumber(singlePrintData.header.total_biaya || 0)}</td>
+                <td className="border border-slate-800 p-1 text-right font-mono text-teal-900">Rp {formatNumber(singlePrintData.header.total_ditanggung || 0)}</td>
+                <td className="border border-slate-800 p-1 text-right font-mono text-rose-900">Rp {formatNumber(singlePrintData.header.total_selisih || 0)}</td>
+              </tr>
+            </tfoot>
+          </table>
+
+          <div className="border border-slate-800 p-1.5 rounded text-[9px] flex items-center space-x-2 mb-2 bg-slate-50">
+            <span className="font-bold uppercase w-16">Terbilang:</span>
+            <span className="italic font-bold text-slate-900 uppercase">({terbilang(singlePrintData.header.total_biaya || 0)})</span>
+          </div>
+
+          <div className="grid grid-cols-3 pt-2 text-center text-[9px] page-break-inside-avoid">
+            <div>
+              <p className="font-medium">Dokter Yang Merawat</p>
+              <div className="h-10"></div>
+              <p className="font-bold underline">({singlePrintData.header.dokter_merawat || '..............................'})</p>
+            </div>
+            <div>
+              <p className="font-medium">Bendahara Yang Menerima</p>
+              <div className="h-10"></div>
+              <p className="font-bold underline">({singlePrintData.header.bendahara_penerima || '..............................'})</p>
+            </div>
+            <div>
+              <p className="font-medium">Bukit Kerman, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
+              <p className="font-medium">Kepala Ruangan</p>
+              <div className="h-10"></div>
+              <p className="font-bold underline">({singlePrintData.header.kepala_ruangan || '..............................'})</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showDetailModal && selectedPatient && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm animate-fade-in print:p-0 print:bg-white print:static print:inset-auto">
           <div className="bg-white border border-slate-200 w-full max-w-4xl rounded-3xl shadow-2xl overflow-hidden p-6 text-slate-800 relative max-h-[92vh] flex flex-col print:shadow-none print:border-none print:max-h-none print:p-0">
@@ -911,10 +1349,8 @@ export default function AdminRanapPage() {
               <p className="text-xs text-slate-500">No. Reg: <span className="font-mono font-bold text-slate-700">{selectedPatient.no_reg}</span> • Ruangan: {selectedPatient.ruang}</p>
             </div>
 
-            {/* --- AREA TAMPILAN MODAL NORMAL --- */}
             <div className="py-4 overflow-y-auto flex-1 space-y-4 print:hidden">
               
-              {/* TOMBOL AKSI ADMIN DI BAGIAN ATAS */}
               <div className="bg-slate-900 p-4 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3 shadow-md">
                 <div className="flex items-center space-x-2 text-white">
                   <ShieldCheck className="w-5 h-5 text-emerald-400" />
@@ -925,7 +1361,7 @@ export default function AdminRanapPage() {
                     onClick={() => {
                       setActionTargetStatus('VERIFIED_ADMIN');
                       setAdminNoteInput('Tagihan telah diverifikasi dan disetujui sepenuhnya oleh admin.');
-                      handleExecuteStatusUpdate();
+                      handleExecuteStatusUpdate('VERIFIED_ADMIN', 'Tagihan telah diverifikasi dan disetujui sepenuhnya oleh admin.');
                     }}
                     className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs transition cursor-pointer shadow-sm flex items-center space-x-1"
                   >
@@ -979,7 +1415,7 @@ export default function AdminRanapPage() {
                 <div>
                   <span className="text-slate-400 block text-[10px] uppercase font-bold">Tgl Masuk & Keluar</span>
                   <span className="font-bold font-mono text-slate-800">
-                    {selectedPatient.masuk_tgl ? new Date(selectedPatient.masuk_tgl).toLocaleDateString('id-ID') : '-'} s.d. {selectedPatient.keluar_tgl ? new Date(selectedPatient.keluar_tgl).toLocaleDateString('id-ID') : '-'}
+                    {selectedPatient.masuk_tgl ? new Date(selectedPatient.masuk_tgl).toLocaleDateString('id-ID') : '-'} s.d. {selectedPatient.keluar_tgl ? new Date(selectedPatient.keluar_tgl).toLocaleDateString('id-ID') : '-'} ({calculateLengthOfStay(selectedPatient.masuk_tgl, selectedPatient.keluar_tgl)} Hari)
                   </span>
                 </div>
                 <div>
@@ -1029,8 +1465,8 @@ export default function AdminRanapPage() {
                         <td colSpan={7} className="p-6 text-center text-slate-400">Tidak ada rincian item tercatat.</td>
                       </tr>
                     ) : (
-                      patientItems.map((item) => (
-                        <tr key={item.id} className="hover:bg-slate-50">
+                      patientItems.map((item, idx) => (
+                        <tr key={`${item.id || 'item'}-${idx}`} className="hover:bg-slate-50">
                           <td className="p-2.5 font-semibold text-slate-600">{item.kategori_biaya}</td>
                           <td className="p-2.5 font-bold text-slate-900">{item.nama_item}</td>
                           <td className="p-2.5 text-center font-mono">{item.volume}</td>
@@ -1046,112 +1482,13 @@ export default function AdminRanapPage() {
               </div>
             </div>
 
-            {/* --- AREA KHUSUS CETAK RESMI (HANYA MUNCUL KETIKA PRINT) --- */}
-            <div className="hidden print:block font-sans text-slate-900 text-[10px] p-1 space-y-2">
-              <div className="flex items-center border-b-2 border-slate-900 pb-2 mb-2">
-                <div className="w-12 flex-shrink-0 flex items-center justify-center">
-                  <div className="w-10 h-10 bg-emerald-700 rounded-full flex items-center text-white font-bold text-[10px] justify-center text-center">RSUD</div>
-                </div>
-                <div className="flex-1 text-center px-2">
-                  <h4 className="text-[10px] font-bold uppercase tracking-wider">PEMERINTAH KABUPATEN KERINCI</h4>
-                  <h3 className="text-[10px] font-bold uppercase tracking-wider">DINAS KESEHATAN</h3>
-                  <h2 className="text-xs font-black uppercase tracking-tight text-emerald-900">RSUD BUKIT KERMAN</h2>
-                  <p className="text-[8px] text-slate-600">Desa Pondok, Kecamatan Bukit Kerman, Kode Pos: 37176 | Email: rsudbukitkerman@gmail.com</p>
-                </div>
-                <div className="w-12 flex-shrink-0 flex items-center justify-center">
-                  <div className="w-10 h-10 border border-emerald-800 rounded-full flex items-center justify-center text-emerald-800 font-bold text-[8px]">LOGO</div>
-                </div>
-              </div>
-
-              <div className="text-center font-bold underline uppercase text-[11px] tracking-wide mb-2">
-                PERINCIAN BIAYA PERAWATAN PASIEN RAWAT INAP
-              </div>
-
-              <div className="grid grid-cols-2 gap-x-4 border border-slate-800 p-2 rounded text-[9px] mb-2">
-                <div className="space-y-0.5">
-                  <div className="flex"><span className="w-24 font-bold">Nama Pasien</span><span className="mr-2">:</span><span className="font-semibold uppercase">{selectedPatient.nama_pasien}</span></div>
-                  <div className="flex"><span className="w-24 font-bold">Umur</span><span className="mr-2">:</span><span>{selectedPatient.umur || '-'}</span></div>
-                  <div className="flex"><span className="w-24 font-bold">Alamat</span><span className="mr-2">:</span><span>{selectedPatient.alamat || '-'}</span></div>
-                  <div className="flex"><span className="w-24 font-bold">Diagnosa</span><span className="mr-2">:</span><span>{selectedPatient.diagnosa || '-'}</span></div>
-                </div>
-                <div className="space-y-0.5">
-                  <div className="flex"><span className="w-24 font-bold">Masuk Tgl</span><span className="mr-2">:</span><span>{selectedPatient.masuk_tgl ? new Date(selectedPatient.masuk_tgl).toLocaleDateString('id-ID') : '-'}</span></div>
-                  <div className="flex"><span className="w-24 font-bold">Keluar Tgl</span><span className="mr-2">:</span><span>{selectedPatient.keluar_tgl ? new Date(selectedPatient.keluar_tgl).toLocaleDateString('id-ID') : '-'}</span></div>
-                  <div className="flex"><span className="w-24 font-bold">Ruangan</span><span className="mr-2">:</span><span className="font-semibold">{selectedPatient.ruang}</span></div>
-                  <div className="flex"><span className="w-24 font-bold">No. Reg</span><span className="mr-2">:</span><span className="font-mono font-bold">{selectedPatient.no_reg}</span></div>
-                </div>
-              </div>
-
-              <table className="w-full border-collapse border border-slate-800 text-[9px] mb-2">
-                <thead>
-                  <tr className="bg-slate-200 text-slate-900 font-bold uppercase text-center border-b border-slate-800">
-                    <th className="border border-slate-800 p-1 w-6">No</th>
-                    <th className="border border-slate-800 p-1 text-left">Uraian Biaya</th>
-                    <th className="border border-slate-800 p-1 w-8">Vol</th>
-                    <th className="border border-slate-800 p-1 text-right">Tarif (Rp)</th>
-                    <th className="border border-slate-800 p-1 text-right">Jumlah (Rp)</th>
-                    <th className="border border-slate-800 p-1 text-right">Ditanggung (Pihak 3)</th>
-                    <th className="border border-slate-800 p-1 text-right">Selisih (Bayar)</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {patientItems.map((it, idx) => (
-                    <tr key={it.id} className="border-b border-slate-300">
-                      <td className="border border-slate-800 p-0.5 text-center">{idx + 1}</td>
-                      <td className="border border-slate-800 p-0.5">
-                        <span className="font-bold">{it.kategori_biaya}</span> — <span>{it.nama_item}</span>
-                      </td>
-                      <td className="border border-slate-800 p-0.5 text-center font-mono">{it.volume}</td>
-                      <td className="border border-slate-800 p-0.5 text-right font-mono">{formatNumber(it.tarif_satuan)}</td>
-                      <td className="border border-slate-800 p-0.5 text-right font-mono font-bold">{formatNumber(it.jumlah_total)}</td>
-                      <td className="border border-slate-800 p-0.5 text-right font-mono">{formatNumber(it.ditanggung_pihak3)}</td>
-                      <td className="border border-slate-800 p-0.5 text-right font-mono">{formatNumber(it.selisih_bayar)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr className="bg-slate-100 font-bold">
-                    <td colSpan={4} className="border border-slate-800 p-1 text-right uppercase">Jumlah Total :</td>
-                    <td className="border border-slate-800 p-1 text-right font-mono">Rp {formatNumber(selectedPatient.total_biaya || 0)}</td>
-                    <td className="border border-slate-800 p-1 text-right font-mono">Rp {formatNumber(selectedPatient.total_ditanggung || 0)}</td>
-                    <td className="border border-slate-800 p-1 text-right font-mono">Rp {formatNumber(selectedPatient.total_selisih || 0)}</td>
-                  </tr>
-                </tfoot>
-              </table>
-
-              <div className="border border-slate-800 p-1.5 rounded text-[9px] flex items-center space-x-2 mb-2">
-                <span className="font-bold uppercase w-16">Terbilang:</span>
-                <span className="italic font-bold text-slate-800 uppercase">({terbilang(selectedPatient.total_biaya || 0)})</span>
-              </div>
-
-              <div className="grid grid-cols-3 pt-2 text-center text-[9px]">
-                <div>
-                  <p className="font-medium">Dokter Yang Merawat</p>
-                  <div className="h-10"></div>
-                  <p className="font-bold underline">({selectedPatient.dokter_merawat || '..............................'})</p>
-                </div>
-                <div>
-                  <p className="font-medium">Bendahara Yang Menerima</p>
-                  <div className="h-10"></div>
-                  <p className="font-bold underline">({selectedPatient.bendahara_penerima || '..............................'})</p>
-                </div>
-                <div>
-                  <p className="font-medium">Bukit Kerman, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
-                  <p className="font-medium">Kepala Ruangan</p>
-                  <div className="h-10"></div>
-                  <p className="font-bold underline">({selectedPatient.kepala_ruangan || '..............................'})</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Footer Modal (Hanya menyisakan tombol Cetak & Tutup) */}
             <div className="pt-4 border-t border-slate-200 flex items-center justify-end gap-2 print:hidden">
               <button
-                onClick={() => window.print()}
+                onClick={() => handlePrintSingleBill(selectedPatient)}
                 className="flex items-center space-x-1.5 bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition shadow-sm cursor-pointer"
               >
                 <Printer className="w-3.5 h-3.5" />
-                <span>Cetak</span>
+                <span>Cetak Nota Pasien</span>
               </button>
               <button
                 onClick={() => setShowDetailModal(false)}

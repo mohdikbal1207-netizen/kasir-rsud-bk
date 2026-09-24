@@ -32,7 +32,9 @@ import {
   History,
   Headphones,
   Keyboard,
-  Coins
+  Coins,
+  Printer,
+  ShieldCheck
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import KasirHeader from '@/components/kasir/KasirHeader';
@@ -387,6 +389,14 @@ export default function KasirDashboardPage() {
       icon: Clock,
       route: '/kasir/absensi',
       colorTheme: 'indigo'
+    },
+    {
+      id: 'pusat-cetak',
+      title: 'Pusat Cetak Dokumen',
+      description: 'Akses halaman terpusat untuk mencetak laporan rekapitulasi harian, billing, dan kuitansi pembayaran.',
+      icon: Printer,
+      route: '/kasir/pusat-cetak',
+      colorTheme: 'teal'
     }
   ], [rawatJalanCount, rawatInapCount, igdCount]);
 

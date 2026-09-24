@@ -81,6 +81,7 @@ export default function InputRawatInapPage() {
   
   const [activeTab, setActiveTab] = useState<'input' | 'riwayat'>('input');
   const [selectedBillingIds, setSelectedBillingIds] = useState<string[]>([]);
+  const [printType, setPrintType] = useState<'all' | 'selected'>('selected');
   
   const [showDetailModal, setShowDetailModal] = useState<boolean>(false);
   const [activeDetailPasien, setActiveDetailPasien] = useState<SavedBillingHeader | null>(null);
@@ -94,7 +95,7 @@ export default function InputRawatInapPage() {
   // State Kalkulator Pembayaran Tunai
   const [bayarTunai, setbayarTunai] = useState<string>('');
 
-  const [logoKerinciErr, setLogoKerinciErr] = useState<boolean>(false);
+  const [logoPemkabErr, setLogoPemkabErr] = useState<boolean>(false);
   const [logoRsudErr, setLogoRsudErr] = useState<boolean>(false);
 
   const [savedBillings, setSavedBillings] = useState<SavedBillingHeader[]>([]);
@@ -260,14 +261,20 @@ export default function InputRawatInapPage() {
     try {
       const { data: headers, error: headerErr } = await supabase
         .from('ranap_billing_header')
-        .select('*, ranap_billing_items(jumlah_total, ditanggung_pihak3, selisih_bayar)')
+        .select('*')
         .order('created_at', { ascending: false });
 
       if (headerErr) throw headerErr;
 
+      const { data: allItems, error: itemsErr } = await supabase
+        .from('ranap_billing_items')
+        .select('no_reg, jumlah_total, ditanggung_pihak3, selisih_bayar');
+
+      if (itemsErr) throw itemsErr;
+
       if (headers) {
         const formatted = headers.map((h: any) => {
-          const matchingItems = h.ranap_billing_items || [];
+          const matchingItems = (allItems || []).filter((i: any) => i.no_reg === h.no_reg);
           const total_biaya = matchingItems.reduce((acc: number, curr: any) => acc + (curr.jumlah_total || 0), 0);
           const total_ditanggung = matchingItems.reduce((acc: number, curr: any) => acc + (curr.ditanggung_pihak3 || 0), 0);
           const total_selisih = matchingItems.reduce((acc: number, curr: any) => acc + (curr.selisih_bayar || 0), 0);
@@ -330,7 +337,6 @@ export default function InputRawatInapPage() {
     document.body.removeChild(link);
   };
 
-  // PENCARIAN BERDASARKAN NOMOR RM / NO. REG (`no_reg`)
   const handleCariPasienByRM = async () => {
     if (!patientData.noReg || patientData.noReg.trim().length < 3) {
       setModalNotif({
@@ -664,6 +670,11 @@ export default function InputRawatInapPage() {
     return matchSearch && matchFilter && matchStatus;
   });
 
+  // Tentukan data yang dicetak berdasarkan mode cetak (all atau selected)
+  const billingsToPrint = printType === 'selected' 
+    ? filteredBillings.filter(b => selectedBillingIds.includes(b.no_reg))
+    : filteredBillings;
+
   const toggleSelectAll = () => {
     if (selectedBillingIds.length === filteredBillings.length) {
       setSelectedBillingIds([]);
@@ -679,6 +690,10 @@ export default function InputRawatInapPage() {
       setSelectedBillingIds([...selectedBillingIds, noReg]);
     }
   };
+
+  const totalBiayaCetak = billingsToPrint.reduce((acc, curr) => acc + (curr.total_biaya || 0), 0);
+  const totalDitanggungCetak = billingsToPrint.reduce((acc, curr) => acc + (curr.total_ditanggung || 0), 0);
+  const totalSelisihCetak = billingsToPrint.reduce((acc, curr) => acc + (curr.total_selisih || 0), 0);
 
   const totalBiayaTerpilih = filteredBillings.reduce((acc, curr) => acc + (curr.total_biaya || 0), 0);
   const totalTunaiTerpilih = filteredBillings
@@ -719,38 +734,66 @@ export default function InputRawatInapPage() {
       
       <style jsx global>{`
         @media print {
+          @page {
+            size: A4 portrait;
+            margin: 10mm;
+          }
           body {
             background: white !important;
-            color: black !important;
-            font-size: 11px !important;
+            color: #0f172a !important;
+            font-size: 9.5px !important;
+            font-family: Arial, Helvetica, sans-serif !important;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
           }
-          .print\\:hidden {
+          .print\:hidden {
             display: none !important;
+          }
+          .print-only {
+            display: block !important;
+          }
+          .print-grid-signature {
+            display: grid !important;
+            grid-template-columns: 1fr 1fr !important;
+            gap: 2rem !important;
+            margin-top: 1.5rem !important;
+            page-break-inside: avoid !important;
           }
           main {
             padding: 0 !important;
             margin: 0 !important;
             max-width: 100% !important;
+            width: 100% !important;
           }
           input, select {
             border: none !important;
             background: transparent !important;
             box-shadow: none !important;
             padding: 0 !important;
-            font-size: 11px !important;
+            font-size: 9.5px !important;
             color: black !important;
           }
           table {
             border-collapse: collapse !important;
             width: 100% !important;
+            font-size: 9.5px !important;
           }
           th, td {
-            border: 1px solid #94a3b8 !important;
-            padding: 4px 6px !important;
+            border: 1px solid #1e293b !important;
+            padding: 5px 6px !important;
+            word-wrap: break-word;
           }
+          th {
+            background-color: #f1f5f9 !important;
+            color: #000 !important;
+          }
+        }
+        .print-only {
+          display: none;
         }
       `}</style>
 
+      {/* MODAL DETAIL PASIEN */}
       {showDetailModal && activeDetailPasien && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm animate-fade-in print:hidden">
           <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-4xl w-full max-h-[92vh] overflow-hidden flex flex-col">
@@ -769,7 +812,6 @@ export default function InputRawatInapPage() {
             </div>
 
             <div className="p-6 overflow-y-auto space-y-6 flex-1 bg-slate-50">
-              
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm text-xs">
                 <div>
                   <span className="text-slate-400 block font-bold uppercase text-[10px]">No. Registrasi / RM</span>
@@ -824,7 +866,6 @@ export default function InputRawatInapPage() {
                   </table>
                 )}
               </div>
-
             </div>
 
           </div>
@@ -842,14 +883,13 @@ export default function InputRawatInapPage() {
               </button>
             </div>
           </div>
-
         </div>
       )}
 
+      {/* MODAL NOTIFIKASI */}
       {modalNotif.show && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in print:hidden">
           <div className="bg-white rounded-3xl shadow-2xl border border-slate-100 max-w-md w-full overflow-hidden transform transition-all animate-scale-up">
-            
             <div className={`p-6 flex flex-col items-center text-center space-y-3 ${
               modalNotif.type === 'success' ? 'bg-emerald-50/80' :
               modalNotif.type === 'error' ? 'bg-rose-50/80' :
@@ -900,7 +940,6 @@ export default function InputRawatInapPage() {
                 Tutup / Selesai
               </button>
             </div>
-
           </div>
         </div>
       )}
@@ -962,13 +1001,18 @@ export default function InputRawatInapPage() {
             <button
               type="button"
               onClick={() => {
-                setActiveTab('input');
-                setTimeout(() => window.print(), 150);
+                if (activeTab === 'riwayat') {
+                  setPrintType('selected');
+                  setTimeout(() => window.print(), 150);
+                } else {
+                  setActiveTab('input');
+                  setTimeout(() => window.print(), 150);
+                }
               }}
               className="flex items-center space-x-1.5 bg-sky-700 hover:bg-sky-600 text-white px-4 py-2 rounded-xl text-xs font-bold transition shadow-sm cursor-pointer"
             >
               <Printer className="w-4 h-4" />
-              <span>Cetak Formulir</span>
+              <span>{activeTab === 'riwayat' ? `Cetak Rekap Terpilih (${selectedBillingIds.length})` : 'Cetak Formulir'}</span>
             </button>
             <span className="bg-emerald-100 text-emerald-800 px-3 py-1 rounded-md text-xs font-black border border-emerald-200 uppercase">
               {patientData.bendahara}
@@ -1014,34 +1058,103 @@ export default function InputRawatInapPage() {
           )}
         </div>
 
-        {/* TAB 2: DAFTAR RIWAYAT & EKSPOR EXCEL/CSV */}
+        {/* TAB 2: DAFTAR RIWAYAT & EKSPOR EXCEL/CSV & CETAK REKAP */}
         {activeTab === 'riwayat' && (
-          <div className="bg-white rounded-3xl shadow-xl border border-slate-200 p-6 sm:p-8 space-y-6 animate-fade-in print:hidden">
-            <div className="flex items-center justify-between border-b border-slate-200 pb-4">
+          <div className="bg-white rounded-3xl shadow-xl border border-slate-200 p-6 sm:p-8 space-y-6 animate-fade-in print:bg-white print:shadow-none print:border-none print:p-0">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-4 print:hidden">
               <div className="flex items-center space-x-2">
                 <FileText className="w-5 h-5 text-emerald-600" />
                 <h3 className="text-sm font-black text-slate-900 uppercase tracking-wider">Daftar Riwayat Tagihan Rawat Inap & Akumulasi Pembayaran</h3>
               </div>
               <div className="flex items-center space-x-2">
                 <button
+                  onClick={() => {
+                    setPrintType('selected');
+                    setTimeout(() => window.print(), 150);
+                  }}
+                  className="flex items-center space-x-1.5 bg-sky-700 hover:bg-sky-600 text-white px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer shadow-sm"
+                  title="Cetak hanya pasien yang dicentang"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>Cetak Rekap Terpilih ({selectedBillingIds.length})</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setPrintType('all');
+                    setTimeout(() => window.print(), 150);
+                  }}
+                  className="flex items-center space-x-1.5 bg-emerald-700 hover:bg-emerald-600 text-white px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer shadow-sm"
+                  title="Cetak semua data sesuai filter"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>Cetak Rekap Semua ({filteredBillings.length})</span>
+                </button>
+
+                <button
                   onClick={handleExportCSV}
-                  className="flex items-center space-x-1.5 bg-emerald-700 hover:bg-emerald-600 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer shadow-sm"
+                  className="flex items-center space-x-1.5 bg-slate-800 hover:bg-slate-700 text-white px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer shadow-sm"
                   title="Unduh laporan ke Excel / CSV"
                 >
-                  <Download className="w-3.5 h-3.5" />
+                  <Download className="w-4 h-4" />
                   <span>Ekspor Excel</span>
                 </button>
+
                 <button
                   onClick={loadSavedBillings}
-                  className="flex items-center space-x-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer"
+                  className="flex items-center space-x-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer"
                 >
-                  <RefreshCw className={`w-3.5 h-3.5 ${fetchingList ? 'animate-spin' : ''}`} />
+                  <RefreshCw className={`w-4 h-4 ${fetchingList ? 'animate-spin' : ''}`} />
                   <span>Muat Ulang</span>
                 </button>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* KOP SURAT / KOP REKAP CETAK DENGAN DUA LOGO */}
+            <div className="hidden print:flex items-center justify-between pb-3 border-b-2 border-black gap-4 mb-3">
+              <div className="w-16 h-20 relative flex items-center justify-center flex-shrink-0">
+                {!logoPemkabErr ? (
+                  <img 
+                    src="/logo-pemkab.png" 
+                    alt="Logo Pemkab Kerinci" 
+                    onError={() => setLogoPemkabErr(true)}
+                    className="max-h-full max-w-full object-contain"
+                  />
+                ) : (
+                  <div className="w-14 h-18 bg-amber-50 border border-black text-black rounded flex flex-col items-center justify-center text-[8px] font-black text-center p-0.5">
+                    <span>PEMKAB</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="text-center flex-1 space-y-0.5">
+                <h2 className="text-[11px] font-black uppercase tracking-wider">PEMERINTAH KABUPATEN KERINCI — DINAS KESEHATAN</h2>
+                <h1 className="text-sm font-black uppercase text-slate-950">RSUD KELAS D BUKIT KERMAN</h1>
+                <p className="text-[9px] text-slate-700">Desa Pondok, Kecamatan Bukit Kerman, Kode Pos: 37176</p>
+                <div className="pt-1">
+                  <span className="inline-block border border-black px-3 py-0.5 font-black text-[9px] uppercase tracking-wider bg-slate-100">
+                    {printType === 'selected' ? `REKAPITULASI LAPORAN TAGIHAN RAWAT INAP TERPILIH (${billingsToPrint.length} PASIEN)` : `REKAPITULASI KESELURUHAN LAPORAN TAGIHAN RAWAT INAP (${billingsToPrint.length} PASIEN)`}
+                  </span>
+                </div>
+              </div>
+
+              <div className="w-16 h-20 relative flex items-center justify-center flex-shrink-0">
+                {!logoRsudErr ? (
+                  <img 
+                    src="/logo-rsud.jpeg" 
+                    alt="Logo RSUD Bukit Kerman" 
+                    onError={() => setLogoRsudErr(true)}
+                    className="max-h-full max-w-full object-contain"
+                  />
+                ) : (
+                  <div className="w-14 h-18 bg-emerald-50 border border-black text-black rounded flex flex-col items-center justify-center text-[8px] font-black text-center p-0.5">
+                    <span>RSUD</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 print:hidden">
               <div className="bg-slate-900 text-white p-5 rounded-2xl shadow-md border border-slate-800 flex flex-col justify-between">
                 <div className="flex items-center justify-between text-slate-400 text-xs font-bold uppercase">
                   <span>Total Sesuai Filter ({filteredBillings.length} Pasien)</span>
@@ -1076,7 +1189,7 @@ export default function InputRawatInapPage() {
               </div>
             </div>
 
-            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3 print:hidden">
               <div className="relative w-full sm:w-72">
                 <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
                 <input 
@@ -1112,11 +1225,11 @@ export default function InputRawatInapPage() {
               </div>
             </div>
 
-            <div className="overflow-x-auto border border-slate-200 rounded-2xl bg-white shadow-sm">
+            <div className="overflow-x-auto border border-slate-200 rounded-2xl bg-white shadow-sm print:border-none print:shadow-none">
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
-                  <tr className="bg-slate-800 text-white uppercase font-bold text-[10px] tracking-wider">
-                    <th className="p-3 text-center w-12">
+                  <tr className="bg-slate-800 text-white uppercase font-bold text-[10px] tracking-wider print:bg-slate-200 print:text-black">
+                    <th className="p-3 text-center w-12 print:hidden">
                       <input 
                         type="checkbox"
                         checked={selectedBillingIds.length === filteredBillings.length && filteredBillings.length > 0}
@@ -1132,7 +1245,7 @@ export default function InputRawatInapPage() {
                     <th className="p-3 text-right">Total Biaya</th>
                     <th className="p-3 text-right">Ditanggung BPJS</th>
                     <th className="p-3 text-right">Wajib Bayar (Umum)</th>
-                    <th className="p-3 text-center">Aksi</th>
+                    <th className="p-3 text-center print:hidden">Aksi</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
@@ -1145,11 +1258,17 @@ export default function InputRawatInapPage() {
                       <td colSpan={10} className="p-8 text-center text-slate-500">Tidak ada data tagihan yang cocok.</td>
                     </tr>
                   ) : (
-                    filteredBillings.map((b) => {
+                    filteredBillings.map((b, index) => {
                       const isChecked = selectedBillingIds.includes(b.no_reg);
+                      // Saat cetak dengan mode 'selected', sembunyikan baris yang tidak dicentang
+                      const shouldHideOnPrint = printType === 'selected' && !isChecked;
+
                       return (
-                        <tr key={b.no_reg} className={`hover:bg-slate-50 transition ${isChecked ? 'bg-emerald-50/40' : ''}`}>
-                          <td className="p-3 text-center">
+                        <tr 
+                          key={`${b.no_reg}-${index}`} 
+                          className={`hover:bg-slate-50 transition ${isChecked ? 'bg-emerald-50/40' : ''} ${shouldHideOnPrint ? 'print:hidden' : ''}`}
+                        >
+                          <td className="p-3 text-center print:hidden">
                             <input 
                               type="checkbox"
                               checked={isChecked}
@@ -1173,7 +1292,7 @@ export default function InputRawatInapPage() {
                           <td className="p-3 text-right font-mono font-bold text-slate-900">Rp {formatNumber(b.total_biaya || 0)}</td>
                           <td className="p-3 text-right font-mono text-emerald-700 font-semibold">Rp {formatNumber(b.total_ditanggung || 0)}</td>
                           <td className="p-3 text-right font-mono text-rose-700 font-bold">Rp {formatNumber(b.total_selisih || 0)}</td>
-                          <td className="p-3 text-center">
+                          <td className="p-3 text-center print:hidden">
                             <div className="flex items-center justify-center space-x-1">
                               <button
                                 onClick={() => handleOpenDetailPasien(b)}
@@ -1199,10 +1318,33 @@ export default function InputRawatInapPage() {
                     })
                   )}
                 </tbody>
+                <tfoot>
+                  <tr className="bg-slate-900 text-white font-black text-xs print:bg-slate-200 print:text-black">
+                    <td colSpan={6} className="p-3 text-right uppercase">
+                      {printType === 'selected' ? `Total Akumulasi Terpilih (${billingsToPrint.length} Pasien):` : `Total Akumulasi Semua (${billingsToPrint.length} Pasien):`}
+                    </td>
+                    <td className="p-3 text-right font-mono">Rp {formatNumber(totalBiayaCetak)}</td>
+                    <td className="p-3 text-right font-mono">Rp {formatNumber(totalDitanggungCetak)}</td>
+                    <td className="p-3 text-right font-mono">Rp {formatNumber(totalSelisihCetak)}</td>
+                    <td className="print:hidden"></td>
+                  </tr>
+                </tfoot>
               </table>
             </div>
-            <div className="text-xs font-bold text-slate-600 pt-1">
-              Ditampilkan: <strong className="text-emerald-700">{filteredBillings.length}</strong> pasien
+
+            {/* TANDA TANGAN DI LAPORAN REKAP CETAK */}
+            <div className="print-grid-signature hidden print:grid grid-cols-2 pt-6 text-xs">
+              <div></div>
+              <div className="text-center">
+                <p className="font-bold text-slate-700 mb-1">Bukit Kerman, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
+                <p className="font-bold text-slate-700 mb-14">Petugas Kasir / Bendahara Penerima</p>
+                <p className="font-bold underline uppercase">{patientData.bendahara}</p>
+                <p className="font-mono text-[10px]">NIP. {patientData.petugasNip || '-'}</p>
+              </div>
+            </div>
+
+            <div className="text-xs font-bold text-slate-600 pt-1 print:hidden">
+              Ditampilkan: <strong className="text-emerald-700">{filteredBillings.length}</strong> pasien (Dipilih untuk cetak: <strong className="text-sky-700">{selectedBillingIds.length}</strong> pasien)
             </div>
           </div>
         )}
@@ -1244,11 +1386,11 @@ export default function InputRawatInapPage() {
 
             <div className="flex items-center justify-between pb-6 border-b-2 border-slate-800 gap-4">
               <div className="flex-shrink-0 w-20 h-24 relative flex items-center justify-center">
-                {!logoKerinciErr ? (
+                {!logoPemkabErr ? (
                   <img 
-                    src="/logo-kerinci.png" 
-                    alt="Logo Kabupaten Kerinci" 
-                    onError={() => setLogoKerinciErr(true)}
+                    src="/logo-pemkab.png" 
+                    alt="Logo Pemkab Kerinci" 
+                    onError={() => setLogoPemkabErr(true)}
                     className="max-h-full max-w-full object-contain"
                   />
                 ) : (

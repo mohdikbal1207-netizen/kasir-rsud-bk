@@ -21,7 +21,8 @@ import {
   HelpCircle,
   Wrench,
   ShieldAlert,
-  Database
+  Database,
+  Printer
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import AdminHeader from '@/components/admin/AdminHeader';
@@ -691,6 +692,38 @@ export default function AdminDashboardPage() {
 
               <div className="pt-4 border-t border-slate-100 flex items-center justify-between text-xs font-bold text-emerald-600 group-hover:translate-x-1 transition-transform">
                 <span>Buka Audit Logs</span>
+                <ArrowRight className="w-4 h-4" />
+              </div>
+            </div>
+
+            {/* 12. Modul Pusat Cetak Dokumen & Laporan */}
+            <div 
+              onClick={() => router.push('/admin/pusat-cetak')}
+              className="bg-white border border-teal-200/90 rounded-3xl p-6 shadow-lg shadow-teal-100/50 flex flex-col justify-between space-y-6 transition hover:shadow-xl hover:border-teal-400 cursor-pointer group relative overflow-hidden"
+            >
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="w-12 h-12 bg-teal-50 border border-teal-200 rounded-2xl text-teal-600 flex items-center justify-center shadow-sm group-hover:scale-105 transition">
+                    <Printer className="w-6 h-6" />
+                  </div>
+                  <span className="bg-teal-600 text-white font-bold text-[10px] px-2.5 py-1 rounded-full shadow-sm flex items-center gap-1">
+                    <ShieldCheck className="w-3 h-3" />
+                    <span>Admin &amp; Kasir</span>
+                  </span>
+                </div>
+
+                <div className="space-y-1">
+                  <h3 className="text-base font-bold text-slate-900 group-hover:text-teal-700 transition">
+                    Pusat Cetak Dokumen
+                  </h3>
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Akses halaman terpusat untuk mencetak laporan manajerial 360°, rekapitulasi, dan billing pasien.
+                  </p>
+                </div>
+              </div>
+
+              <div className="pt-4 border-t border-slate-100 flex items-center justify-between text-xs font-bold text-teal-600 group-hover:translate-x-1 transition-transform">
+                <span>Buka Pusat Cetak</span>
                 <ArrowRight className="w-4 h-4" />
               </div>
             </div>

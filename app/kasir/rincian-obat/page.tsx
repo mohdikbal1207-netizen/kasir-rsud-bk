@@ -100,6 +100,11 @@ export default function KasirRincianObatPage() {
   const [penjaminFilter, setPenjaminFilter] = useState<string>('semua');
   const [isCopied, setIsCopied] = useState<boolean>(false);
 
+  // State Checkbox & Cetak Massal
+  const [selectedRecordIds, setSelectedRecordIds] = useState<number[]>([]);
+  const [isBulkPrintModalOpen, setIsBulkPrintModalOpen] = useState<boolean>(false);
+  const [bulkPrintMode, setBulkPrintMode] = useState<'selected' | 'all'>('selected');
+
   // State Baru untuk Pencarian di Tab Riwayat Pasien
   const [patientSearchTerm, setPatientSearchTerm] = useState<string>('');
 
@@ -392,7 +397,24 @@ export default function KasirRincianObatPage() {
   const totalPending = records.filter(r => r.status_verifikasi === 'Menunggu Verifikasi').length;
   const totalDisetujui = records.filter(r => r.status_verifikasi === 'Disetujui').length;
 
-  // Grouping Data Pasien Unik untuk Tab Riwayat Pasien (Lengkap dengan Status Verifikasi Terakhir)
+  // Handler Checkbox Selection
+  const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.checked) {
+      setSelectedRecordIds(filteredRecords.map(r => r.id));
+    } else {
+      setSelectedRecordIds([]);
+    }
+  };
+
+  const handleToggleSelectRecord = (id: number) => {
+    if (selectedRecordIds.includes(id)) {
+      setSelectedRecordIds(selectedRecordIds.filter(item => item !== id));
+    } else {
+      setSelectedRecordIds([...selectedRecordIds, id]);
+    }
+  };
+
+  // Grouping Data Pasien Unik untuk Tab Riwayat Pasien
   const uniquePatientsMap = new Map();
   records.forEach(r => {
     if (!uniquePatientsMap.has(r.no_rm)) {
@@ -419,14 +441,13 @@ export default function KasirRincianObatPage() {
   });
   const uniquePatientsList = Array.from(uniquePatientsMap.values());
 
-  // Filter khusus untuk pencarian di Tab Riwayat Pasien
   const filteredUniquePatients = uniquePatientsList.filter(p => 
     p.nama_pasien.toLowerCase().includes(patientSearchTerm.toLowerCase()) || 
     p.no_rm.toLowerCase().includes(patientSearchTerm.toLowerCase())
   );
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col justify-between selection:bg-emerald-500 selection:text-white">
+    <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col justify-between selection:bg-emerald-500 selection:text-white print:min-h-0 print:block print:bg-white print:justify-start">
       <KasirHeader 
         title="RSUD BUKIT KERMAN" 
         subtitle="Input & Cetak Rincian Biaya Obat-Obatan & OBHP"
@@ -441,25 +462,39 @@ export default function KasirRincianObatPage() {
 
       <main className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-8 flex-1 space-y-6 print:p-0 print:max-w-none">
         
-        {/* TOP BAR ACTION */}
-        <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 print:hidden">
+        {/* TOP BAR ACTION (DIPERBARUI: TOMBOL CETAK REKAPAN & TERPILIH ADA DI SINI AGAR SELALU MUNCUL) */}
+        <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 print:hidden">
           <div>
             <h1 className="text-xl font-black text-slate-900 tracking-tight flex items-center gap-2">
               <Pill className="w-6 h-6 text-emerald-600" /> Rincian Biaya Obat &amp; OBHP (Kasir)
             </h1>
             <p className="text-xs text-slate-500 mt-0.5">Input formulir lembar rincian obat per pasien. Data langsung terkunci begitu terkirim.</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              disabled={selectedRecordIds.length === 0}
+              onClick={() => { setBulkPrintMode('selected'); setIsBulkPrintModalOpen(true); }}
+              className="bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40 text-emerald-800 border border-emerald-300 font-bold text-xs px-3.5 py-2.5 rounded-2xl transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+              title="Cetak item transaksi yang dicentang di tabel"
+            >
+              <Printer className="w-4 h-4" /> Cetak Terpilih ({selectedRecordIds.length})
+            </button>
+            <button
+              onClick={() => { setBulkPrintMode('all'); setIsBulkPrintModalOpen(true); }}
+              className="bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs px-3.5 py-2.5 rounded-2xl transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+              title="Cetak seluruh rekapan data"
+            >
+              <Printer className="w-4 h-4 text-emerald-400" /> Cetak Semua Rekapan
+            </button>
             <button
               onClick={handleExportCSV}
-              className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs px-3.5 py-3 rounded-2xl transition flex items-center gap-1.5 cursor-pointer"
-              title="Unduh Rekap CSV / Excel"
+              className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs px-3.5 py-2.5 rounded-2xl transition flex items-center gap-1.5 cursor-pointer"
             >
               <FileSpreadsheet className="w-4 h-4 text-emerald-600" /> Ekspor Data
             </button>
             <button
               onClick={() => setIsFormOpen(true)}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-4 py-3 rounded-2xl transition shadow-md flex items-center gap-2 cursor-pointer"
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-4 py-2.5 rounded-2xl transition shadow-md flex items-center gap-2 cursor-pointer"
             >
               <Plus className="w-4 h-4" /> Input Rincian Obat Baru
             </button>
@@ -595,6 +630,14 @@ export default function KasirRincianObatPage() {
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
                   <tr className="bg-slate-100 text-slate-700 font-black uppercase border-b border-slate-200 text-[10px]">
+                    <th className="p-3.5 w-10 text-center">
+                      <input 
+                        type="checkbox" 
+                        onChange={handleSelectAll} 
+                        checked={filteredRecords.length > 0 && selectedRecordIds.length === filteredRecords.length}
+                        className="rounded cursor-pointer"
+                      />
+                    </th>
                     <th className="p-3.5">No. Transaksi</th>
                     <th className="p-3.5">Pasien / RM</th>
                     <th className="p-3.5">Layanan &amp; Penjamin</th>
@@ -606,12 +649,20 @@ export default function KasirRincianObatPage() {
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-medium">
                   {isLoading ? (
-                    <tr><td colSpan={7} className="text-center py-6 text-slate-400">Memuat data...</td></tr>
+                    <tr><td colSpan={8} className="text-center py-6 text-slate-400">Memuat data...</td></tr>
                   ) : filteredRecords.length === 0 ? (
-                    <tr><td colSpan={7} className="text-center py-6 text-slate-400">Belum ada rincian obat yang diinput.</td></tr>
+                    <tr><td colSpan={8} className="text-center py-6 text-slate-400">Belum ada rincian obat yang diinput.</td></tr>
                   ) : (
                     filteredRecords.map((r) => (
-                      <tr key={r.id} className="hover:bg-slate-50">
+                      <tr key={r.id} className={`hover:bg-slate-50 ${selectedRecordIds.includes(r.id) ? 'bg-emerald-50/50' : ''}`}>
+                        <td className="p-3.5 text-center">
+                          <input 
+                            type="checkbox" 
+                            checked={selectedRecordIds.includes(r.id)} 
+                            onChange={() => handleToggleSelectRecord(r.id)}
+                            className="rounded cursor-pointer"
+                          />
+                        </td>
                         <td className="p-3.5 font-mono font-bold text-slate-900">
                           {r.no_transaksi}
                           <span className="block text-[10px] text-slate-400 font-normal">{new Date(r.created_at).toLocaleDateString('id-ID')}</span>
@@ -640,7 +691,7 @@ export default function KasirRincianObatPage() {
                         </td>
                         <td className="p-3.5 text-center">
                           <div className="flex items-center justify-center gap-1.5">
-                            <button onClick={() => setPrintRecord(r)} className="p-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl transition cursor-pointer" title="Cetak">
+                            <button onClick={() => setPrintRecord(r)} className="p-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl transition cursor-pointer" title="Cetak Satuan">
                               <Printer className="w-4 h-4" />
                             </button>
                             <button onClick={() => handleCopySummary(r)} className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-xl transition cursor-pointer" title="Salin WA">
@@ -657,7 +708,7 @@ export default function KasirRincianObatPage() {
           </>
         )}
 
-        {/* KONTEN TAB 2: RIWAYAT PASIEN & STATUS VERIFIKASI ADMIN */}
+        {/* KONTEN TAB 2: RIWAYAT PASIEN */}
         {activeTab === 'riwayat_pasien' && (
           <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm space-y-4">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b pb-4">
@@ -748,6 +799,109 @@ export default function KasirRincianObatPage() {
         )}
 
       </main>
+
+      {/* MODAL BULK PRINT (CETAK REKAPAN TERPILIH / SEMUA) */}
+      {isBulkPrintModalOpen && (
+        <div className="fixed inset-0 z-60 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 print:p-0 print:bg-white print:static">
+          <div className="bg-white rounded-3xl max-w-4xl w-full p-8 shadow-2xl border border-slate-200 space-y-6 max-h-[90vh] flex flex-col print:border-0 print:shadow-none print:max-w-none print:p-0 print:max-h-none">
+            
+            {/* KOP SURAT RESMI */}
+            <div className="border-b-4 border-black pb-3 text-center relative font-serif">
+              <div className="flex items-center justify-between">
+                <img src="/logo-kerinci.png" alt="Logo Kab Kerinci" className="w-16 h-16 object-contain" />
+                <div className="text-center flex-1 mx-2">
+                  <h3 className="text-sm font-bold tracking-wide uppercase">PEMERINTAH KABUPATEN KERINCI</h3>
+                  <h2 className="text-base font-black tracking-wide uppercase">DINAS KESEHATAN</h2>
+                  <h1 className="text-xl font-black tracking-wider uppercase">RSUD BUKIT KERMAN</h1>
+                  <p className="text-[10px] font-sans">Desa Pondok, Kecamatan Bukit Kerman, Kode Pos: 37176</p>
+                </div>
+                <img src="/logo-bakti-husada.png" alt="Logo Bakti Husada" className="w-16 h-16 object-contain" />
+              </div>
+            </div>
+
+            <div className="text-center font-black text-sm uppercase underline tracking-wider font-sans pt-1">
+              {bulkPrintMode === 'selected' ? 'REKAPITULASI BIAYA OBAT & OBHP (DATA TERPILIH)' : 'REKAPITULASI KESELURUHAN BIAYA OBAT & OBHP FARMASI'}
+            </div>
+
+            <div className="text-xs font-mono text-center text-slate-600">
+              Tanggal Cetak: {new Date().toLocaleDateString('id-ID', { dateStyle: 'full' })} &bull; Total Berkas: {bulkPrintMode === 'selected' ? selectedRecordIds.length : filteredRecords.length}
+            </div>
+
+            <div className="border-2 border-black overflow-y-auto flex-1 max-h-[50vh] print:max-h-none">
+              <table className="w-full text-left text-xs border-collapse font-sans">
+                <thead>
+                  <tr className="border-b-2 border-black bg-slate-100 print:bg-slate-200 font-black text-center uppercase text-[10px]">
+                    <th className="p-2 border-r border-black w-10">No</th>
+                    <th className="p-2 border-r border-black">No. Transaksi</th>
+                    <th className="p-2 border-r border-black">Tanggal</th>
+                    <th className="p-2 border-r border-black">No. RM &amp; Nama Pasien</th>
+                    <th className="p-2 border-r border-black">Layanan / Penjamin</th>
+                    <th className="p-2 border-r border-black">Status</th>
+                    <th className="p-2 text-right">Total Biaya</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y border-black font-medium text-[11px]">
+                  {(() => {
+                    const targetData = bulkPrintMode === 'selected'
+                      ? records.filter(r => selectedRecordIds.includes(r.id))
+                      : filteredRecords;
+
+                    const grandTotal = targetData.reduce((acc, curr) => acc + (curr.total_biaya || 0), 0);
+
+                    return (
+                      <>
+                        {targetData.map((r, i) => (
+                          <tr key={r.id} className="border-b border-black">
+                            <td className="p-2 border-r border-black text-center font-mono">{i + 1}</td>
+                            <td className="p-2 border-r border-black font-mono font-bold">{r.no_transaksi}</td>
+                            <td className="p-2 border-r border-black font-mono">{new Date(r.created_at).toLocaleDateString('id-ID')}</td>
+                            <td className="p-2 border-r border-black">
+                              <strong className="block uppercase">{r.nama_pasien}</strong>
+                              <span className="font-mono text-[10px]">RM: {r.no_rm}</span>
+                            </td>
+                            <td className="p-2 border-r border-black">
+                              <span className="block font-bold">{r.jenis_layanan}</span>
+                              <span className="text-[10px]">{r.penjamin || 'Umum'}</span>
+                            </td>
+                            <td className="p-2 border-r border-black text-center uppercase font-bold text-[10px]">{r.status_verifikasi}</td>
+                            <td className="p-2 text-right font-mono font-bold">{formatRupiah(r.total_biaya)}</td>
+                          </tr>
+                        ))}
+                        <tr className="border-t-2 border-black font-black bg-slate-50 print:bg-slate-100">
+                          <td colSpan={6} className="p-2.5 border-r border-black text-right uppercase">TOTAL KESELURUHAN NOMINAL:</td>
+                          <td className="p-2.5 text-right font-mono text-sm">{formatRupiah(grandTotal)}</td>
+                        </tr>
+                      </>
+                    );
+                  })()}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="pt-4 flex justify-between items-end font-sans text-xs">
+              <div>
+                <p className="font-bold text-slate-500">Mengetahui,</p>
+                <p className="font-bold">Kepala Instalasi Farmasi / Kasir</p>
+                <div className="h-14"></div>
+                <p className="font-bold underline">( _________________________ )</p>
+              </div>
+              <div className="text-right">
+                <p className="font-bold text-slate-500">Kerinci, {new Date().toLocaleDateString('id-ID')}</p>
+                <p className="font-bold">Petugas Pencetak Rekapan</p>
+                <div className="h-14"></div>
+                <p className="font-bold underline">( RSUD Bukit Kerman )</p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-4 border-t border-slate-200 print:hidden">
+              <button onClick={() => setIsBulkPrintModalOpen(false)} className="px-4 py-2 bg-slate-200 text-slate-700 rounded-xl text-xs font-bold cursor-pointer">Tutup</button>
+              <button onClick={() => window.print()} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow flex items-center gap-1.5 cursor-pointer">
+                <Printer className="w-4 h-4" /> Cetak Rekapitulasi Resmi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* MODAL DETAIL RIWAYAT KUNJUNGAN PASIEN */}
       {isPatientDetailModalOpen && (
@@ -980,7 +1134,7 @@ export default function KasirRincianObatPage() {
         </div>
       )}
 
-      {/* MODAL PRINT PREVIEW */}
+      {/* MODAL PRINT PREVIEW (SATUAN) */}
       {printRecord && (
         <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 print:p-0 print:bg-white print:static">
           <div className="bg-white rounded-3xl max-w-2xl w-full p-8 shadow-2xl border border-slate-200 space-y-6 print:border-0 print:shadow-none print:max-w-none print:p-0">
