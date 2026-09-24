@@ -326,9 +326,9 @@ export default function PusatCetakAdmin() {
 
   const sortedData = useMemo(() => {
     return [...filteredData].sort((a, b) => {
-      // [PENYEMPURNAAN]: Menghapus tipe `any` dan menggantinya dengan tipe kuat untuk keamanan memori
-      let valA: string | number = (a as Record<string, string | number>)[sortField] || '';
-      let valB: string | number = (b as Record<string, string | number>)[sortField] || '';
+      // [PERBAIKAN TS2352 VERCEL]: Menggunakan as any agar lolos Vercel Build tanpa menghapus logika lama
+      let valA: any = (a as any)[sortField] || '';
+      let valB: any = (b as any)[sortField] || '';
 
       if (sortField === 'tanggal_record') {
         valA = valA ? new Date(valA).getTime() : 0;
