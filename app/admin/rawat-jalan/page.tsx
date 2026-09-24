@@ -36,8 +36,7 @@ import {
   Info,
   ArrowUpDown,
   ShieldAlert,
-  RotateCcw,
-  SlidersHorizontal
+  RotateCcw
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import AdminHeader from '@/components/admin/AdminHeader';
@@ -150,7 +149,6 @@ export default function AdminRawatJalanVerification() {
         const { data, error } = await query;
 
         if (!error && data) {
-          // Filter fleksibel: ambil yang jenis_layanan rawat_jalan ATAU yang null/kosong (default kasir)
           const filtered = data.filter(item => 
             !item.jenis_layanan || item.jenis_layanan === 'rawat_jalan' || item.jenis_layanan === ''
           );
@@ -303,9 +301,12 @@ export default function AdminRawatJalanVerification() {
     }, 300);
   };
 
-  // Fitur Ekspor ke CSV / Excel untuk Admin
+  // Fitur Ekspor ke CSV / Excel
   const handleExportCSV = () => {
-    const listToExport = filteredTransactions;
+    const listToExport = selectedTxIds.length > 0 
+      ? filteredTransactions.filter(t => selectedTxIds.includes(t.id))
+      : filteredTransactions;
+
     if (listToExport.length === 0) {
       showToast('Tidak ada data untuk diekspor.', 'error');
       return;
@@ -369,6 +370,11 @@ export default function AdminRawatJalanVerification() {
     return 0;
   });
 
+  // DATA REKAP KHUSUS DILENGKAPI FITUR HANYA PASIEN YANG DICENTANG
+  const printTransactions = selectedTxIds.length > 0 
+    ? filteredTransactions.filter(t => selectedTxIds.includes(t.id))
+    : filteredTransactions;
+
   const filteredPatients = patients.filter(p =>
     p.nama_pasien?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     p.no_rm?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -380,6 +386,10 @@ export default function AdminRawatJalanVerification() {
   const totalDibatalkan = transactions.filter(t => t.status_bayar === 'dibatalkan').length;
   
   const totalNominal = filteredTransactions
+    .filter(t => t.status_bayar !== 'dibatalkan')
+    .reduce((acc, curr) => acc + Number(curr.total_biaya || 0), 0);
+
+  const printTotalNominal = printTransactions
     .filter(t => t.status_bayar !== 'dibatalkan')
     .reduce((acc, curr) => acc + Number(curr.total_biaya || 0), 0);
 
@@ -716,7 +726,7 @@ export default function AdminRawatJalanVerification() {
                 className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition flex items-center space-x-1.5 cursor-pointer shadow-sm"
               >
                 <Printer className="w-4 h-4" />
-                <span>Cetak Rekap</span>
+                <span>Cetak Rekap {selectedTxIds.length > 0 ? `(${selectedTxIds.length})` : ''}</span>
               </button>
 
               <button
@@ -1005,14 +1015,22 @@ export default function AdminRawatJalanVerification() {
 
       </main>
 
-      {/* FLOATING ACTION BAR FOR BATCH APPROVE */}
+      {/* FLOATING ACTION BAR FOR BATCH APPROVE & PRINT SELECTED */}
       {selectedTxIds.length > 0 && activeTab !== 'pasien' && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-6 py-4 rounded-3xl shadow-2xl border border-slate-700 flex items-center justify-between gap-6 z-50 w-11/12 max-w-xl backdrop-blur-lg print:hidden">
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-6 py-4 rounded-3xl shadow-2xl border border-slate-700 flex items-center justify-between gap-6 z-50 w-11/12 max-w-2xl backdrop-blur-lg print:hidden">
           <div>
             <p className="text-xs text-slate-400">{selectedTxIds.length} Transaksi Dipilih</p>
-            <p className="text-xs font-bold text-teal-300">Siap untuk verifikasi massal</p>
+            <p className="text-xs font-bold text-teal-300">Siap untuk aksi massal atau cetak terpilih</p>
           </div>
           <div className="flex items-center space-x-2">
+            <button
+              type="button"
+              onClick={handlePrintSummaryReport}
+              className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold rounded-2xl flex items-center space-x-1.5 transition cursor-pointer border border-slate-600"
+            >
+              <Printer className="w-4 h-4 text-amber-300" />
+              <span>Cetak Terpilih ({selectedTxIds.length})</span>
+            </button>
             <button
               type="button"
               onClick={() => setSelectedTxIds([])}
@@ -1020,14 +1038,16 @@ export default function AdminRawatJalanVerification() {
             >
               Batal
             </button>
-            <button
-              type="button"
-              onClick={handleBatchApprove}
-              className="px-4 py-2.5 bg-teal-600 hover:bg-teal-500 text-white rounded-2xl font-bold text-xs flex items-center space-x-1.5 transition cursor-pointer shadow-lg"
-            >
-              <Zap className="w-4 h-4 text-amber-300" />
-              <span>Setujui Lunas Massal ({selectedTxIds.length})</span>
-            </button>
+            {activeTab === 'pending' && (
+              <button
+                type="button"
+                onClick={handleBatchApprove}
+                className="px-4 py-2.5 bg-teal-600 hover:bg-teal-500 text-white rounded-2xl font-bold text-xs flex items-center space-x-1.5 transition cursor-pointer shadow-lg"
+              >
+                <Zap className="w-4 h-4 text-amber-300" />
+                <span>Lunas Massal ({selectedTxIds.length})</span>
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -1261,67 +1281,109 @@ export default function AdminRawatJalanVerification() {
         </div>
       )}
 
-      {/* LAYOUT DOKUMEN CETAK */}
-      <div className="hidden print:block print:w-full print:bg-white print:text-black print:p-0 font-serif text-[11pt] leading-snug">
+      {/* LAYOUT DOKUMEN CETAK RESPONSIVE UNTUK SEMUA UKURAN KERTAS */}
+      <div className="hidden print:block print:w-full print:bg-white print:text-black print:p-0 font-sans leading-snug">
+        
+        {/* CSS FLUID RESPONSIVE CETAK */}
+        <style jsx global>{`
+          @media print {
+            @page {
+              margin: 8mm;
+              size: auto; /* Mengikuti pengaturan ukuran kertas apapun yang dipilih pengguna di print dialog */
+            }
+            html, body {
+              background: white !important;
+              color: black !important;
+              width: 100% !important;
+              margin: 0 !important;
+              padding: 0 !important;
+              -webkit-print-color-adjust: exact;
+            }
+            .print-container {
+              width: 100% !important;
+              max-width: 100% !important;
+              box-sizing: border-box !important;
+            }
+            .print-table {
+              width: 100% !important;
+              border-collapse: collapse !important;
+              table-layout: fixed !important; /* Mencegah tabel meluber ke samping */
+            }
+            .print-table th, .print-table td {
+              word-wrap: break-word !important;
+              overflow-wrap: break-word !important;
+              padding: 4px 6px !important;
+            }
+            .no-break {
+              page-break-inside: avoid !important;
+              break-inside: avoid !important;
+            }
+          }
+        `}</style>
+
         {isPrintingSummary ? (
-          <div className="p-8 max-w-4xl mx-auto space-y-4">
-            <div className="border-b-4 border-double border-black pb-2 flex items-center justify-between gap-4">
-              <div className="w-16 h-16 flex-shrink-0">
+          <div className="print-container p-2 w-full mx-auto space-y-3 text-[9pt]">
+            <div className="border-b-2 border-black pb-2 flex items-center justify-between gap-2">
+              <div className="w-12 h-12 flex-shrink-0">
                 <img src="/logo-kerinci.png" alt="Logo Kerinci" className="w-full h-full object-contain" />
               </div>
               <div className="text-center flex-1 space-y-0.5">
-                <h3 className="text-xs font-bold tracking-wide">PEMERINTAH KABUPATEN KERINCI</h3>
-                <h2 className="text-sm font-bold tracking-wide">DINAS KESEHATAN</h2>
-                <h1 className="text-base font-black uppercase">RSUD KELAS D BUKIT KERMAN</h1>
-                <p className="text-[9pt]">Desa Pondok, Kecamatan Bukit Kerman, Kode Pos: 37176</p>
+                <h3 className="text-[8pt] font-bold tracking-wide uppercase">PEMERINTAH KABUPATEN KERINCI</h3>
+                <h2 className="text-[9pt] font-bold tracking-wide uppercase">DINAS KESEHATAN</h2>
+                <h1 className="text-[11pt] font-black uppercase">RSUD KELAS D BUKIT KERMAN</h1>
+                <p className="text-[7.5pt]">Desa Pondok, Kecamatan Bukit Kerman, Kode Pos: 37176</p>
               </div>
-              <div className="w-16 h-16 flex-shrink-0">
+              <div className="w-12 h-12 flex-shrink-0">
                 <img src="/logo-rsud.jpeg" alt="Logo RSUD" className="w-full h-full object-contain" />
               </div>
             </div>
 
-            <div className="text-center font-bold py-2">
-              <p className="underline tracking-wider uppercase text-sm">REKAPITULASI LAPORAN KEUANGAN RAWAT JALAN</p>
-              <p className="text-xs font-normal">Kategori Status: {activeTab.toUpperCase()} | Tanggal Cetak: {new Date().toLocaleDateString('id-ID', { dateStyle: 'full' })}</p>
+            <div className="text-center font-bold py-1">
+              <p className="underline tracking-wider uppercase text-[10pt]">REKAPITULASI LAPORAN KEUANGAN RAWAT JALAN</p>
+              <p className="text-[8pt] font-normal">
+                Kategori Status: {activeTab.toUpperCase()} | 
+                {selectedTxIds.length > 0 ? ` Terpilih (${selectedTxIds.length} Pasien) |` : ''} 
+                Tanggal Cetak: {new Date().toLocaleDateString('id-ID', { dateStyle: 'full' })}
+              </p>
             </div>
 
-            <table className="w-full border-collapse border border-black text-[10pt]">
+            <table className="print-table border border-black text-[8pt]">
               <thead>
-                <tr className="bg-slate-100 font-bold">
-                  <th className="border border-black p-1.5 text-center w-10">NO</th>
-                  <th className="border border-black p-1.5">ID &amp; TANGGAL</th>
-                  <th className="border border-black p-1.5">NAMA PASIEN / RM</th>
-                  <th className="border border-black p-1.5">POLI</th>
-                  <th className="border border-black p-1.5">PENJAMIN</th>
-                  <th className="border border-black p-1.5 text-right">TOTAL (RP)</th>
-                  <th className="border border-black p-1.5 text-center">STATUS</th>
+                <tr className="bg-slate-100 font-bold border-b border-black">
+                  <th className="border border-black text-center" style={{ width: '5%' }}>NO</th>
+                  <th className="border border-black text-left" style={{ width: '18%' }}>ID &amp; TANGGAL</th>
+                  <th className="border border-black text-left" style={{ width: '27%' }}>NAMA PASIEN / RM</th>
+                  <th className="border border-black text-left" style={{ width: '15%' }}>POLI</th>
+                  <th className="border border-black text-left" style={{ width: '13%' }}>PENJAMIN</th>
+                  <th className="border border-black text-right" style={{ width: '12%' }}>TOTAL (RP)</th>
+                  <th className="border border-black text-center" style={{ width: '10%' }}>STATUS</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredTransactions.map((tx, idx) => (
-                  <tr key={tx.id}>
-                    <td className="border border-black p-1 text-center">{idx + 1}</td>
-                    <td className="border border-black p-1 font-mono">{tx.id}</td>
-                    <td className="border border-black p-1">{tx.nama_pasien} ({tx.no_rm})</td>
-                    <td className="border border-black p-1">{tx.poli_tujuan}</td>
-                    <td className="border border-black p-1">{tx.jenis_penjaminan || 'UMUM'}</td>
-                    <td className="border border-black p-1 text-right font-mono">{formatRupiahTanpaSimbol(tx.total_biaya)}</td>
-                    <td className="border border-black p-1 text-center uppercase text-[9pt] font-bold">{tx.status_bayar}</td>
+                {printTransactions.map((tx, idx) => (
+                  <tr key={tx.id} className="no-break border-b border-slate-300">
+                    <td className="border border-black text-center">{idx + 1}</td>
+                    <td className="border border-black font-mono">{tx.id}</td>
+                    <td className="border border-black font-bold">{tx.nama_pasien} <span className="font-normal block text-[7.5pt]">({tx.no_rm})</span></td>
+                    <td className="border border-black">{tx.poli_tujuan}</td>
+                    <td className="border border-black">{tx.jenis_penjaminan || 'UMUM'}</td>
+                    <td className="border border-black text-right font-mono font-bold">{formatRupiahTanpaSimbol(tx.total_biaya)}</td>
+                    <td className="border border-black text-center uppercase text-[7.5pt] font-bold">{tx.status_bayar}</td>
                   </tr>
                 ))}
-                <tr className="font-bold bg-slate-100">
-                  <td colSpan={5} className="border border-black p-2 text-right uppercase">AKUMULASI TOTAL PENDAPATAN:</td>
-                  <td colSpan={2} className="border border-black p-2 text-right font-mono text-sm">{formatRupiah(totalNominal)}</td>
+                <tr className="font-bold bg-slate-100 no-break">
+                  <td colSpan={5} className="border border-black p-1.5 text-right uppercase">AKUMULASI TOTAL PENDAPATAN:</td>
+                  <td colSpan={2} className="border border-black p-1.5 text-right font-mono text-[9pt]">{formatRupiah(printTotalNominal)}</td>
                 </tr>
               </tbody>
             </table>
 
-            <div className="grid grid-cols-2 text-center text-xs pt-12">
+            <div className="grid grid-cols-2 text-center text-[8.5pt] pt-4 no-break">
               <div></div>
-              <div className="space-y-16">
+              <div className="space-y-8">
                 <p className="font-bold">Kerinci, {new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })}</p>
                 <p className="font-bold">Mengetahui,<br />Penanggung Jawab / Admin Pusat</p>
-                <p className="font-bold pt-8">( __________________________ )</p>
+                <p className="font-bold pt-6">( __________________________ )</p>
               </div>
             </div>
           </div>
@@ -1332,28 +1394,27 @@ export default function AdminRawatJalanVerification() {
           const penunjangLainnya: any[] = penunjangObj?.lainnya || [];
 
           return (
-            <div className="p-8 max-w-3xl mx-auto space-y-4">
-              <div className="border-b-4 border-double border-black pb-2 flex items-center justify-between gap-4">
-                <div className="w-16 h-16 flex-shrink-0">
+            <div className="print-container p-2 w-full mx-auto space-y-3 text-[9pt]">
+              <div className="border-b-2 border-black pb-2 flex items-center justify-between gap-2">
+                <div className="w-12 h-12 flex-shrink-0">
                   <img src="/logo-kerinci.png" alt="Logo Kerinci" className="w-full h-full object-contain" />
                 </div>
                 <div className="text-center flex-1 space-y-0.5">
-                  <h3 className="text-xs font-bold tracking-wide">PEMERINTAH KABUPATEN KERINCI</h3>
-                  <h2 className="text-sm font-bold tracking-wide">DINAS KESEHATAN</h2>
-                  <h1 className="text-base font-black uppercase">RSUD KELAS D BUKIT KERMAN</h1>
-                  <p className="text-[9pt]">Desa Pondok, Kecamatan Bukit Kerman, Kode Pos: 37176</p>
-                  <p className="text-[8pt]">Website : https://rsudbukitkerman.kerincikab.go.id &nbsp;&nbsp; e-mail: rsubukitkerman@gmail.com</p>
+                  <h3 className="text-[8pt] font-bold tracking-wide uppercase">PEMERINTAH KABUPATEN KERINCI</h3>
+                  <h2 className="text-[9pt] font-bold tracking-wide uppercase">DINAS KESEHATAN</h2>
+                  <h1 className="text-[11pt] font-black uppercase">RSUD KELAS D BUKIT KERMAN</h1>
+                  <p className="text-[7.5pt]">Desa Pondok, Kecamatan Bukit Kerman, Kode Pos: 37176</p>
                 </div>
-                <div className="w-16 h-16 flex-shrink-0">
+                <div className="w-12 h-12 flex-shrink-0">
                   <img src="/logo-rsud.jpeg" alt="Logo RSUD" className="w-full h-full object-contain" />
                 </div>
               </div>
 
-              <div className="text-center font-bold py-1">
-                <p className="underline tracking-wider uppercase text-sm">PERINCIAN BIAYA PELAYANAN RAWAT JALAN</p>
+              <div className="text-center font-bold py-0.5">
+                <p className="underline tracking-wider uppercase text-[10pt]">PERINCIAN BIAYA PELAYANAN RAWAT JALAN</p>
               </div>
 
-              <div className="text-xs space-y-1 font-mono font-bold w-full max-w-lg">
+              <div className="text-[8.5pt] space-y-0.5 font-mono font-bold w-full">
                 <div className="grid grid-cols-12"><span className="col-span-3">NAMA</span><span className="col-span-9">: {selectedDetail.nama_pasien}</span></div>
                 <div className="grid grid-cols-12"><span className="col-span-3">NO.MR</span><span className="col-span-9">: {selectedDetail.no_rm}</span></div>
                 <div className="grid grid-cols-12"><span className="col-span-3">UMUR</span><span className="col-span-9">: {rincian?.umur || '-'}</span></div>
@@ -1361,12 +1422,12 @@ export default function AdminRawatJalanVerification() {
                 <div className="grid grid-cols-12"><span className="col-span-3">TANGGAL</span><span className="col-span-9">: {new Date(selectedDetail.tanggal_transaksi || new Date()).toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })}</span></div>
               </div>
 
-              <table className="w-full border-collapse border border-black text-xs">
+              <table className="print-table border border-black text-[8.5pt]">
                 <thead>
                   <tr className="border-b border-black bg-slate-100 font-bold">
-                    <th className="border-r border-black p-1.5 w-10 text-center">NO</th>
-                    <th className="border-r border-black p-1.5 text-left">URAIAN BIAYA</th>
-                    <th className="p-1.5 w-44 text-right">JUMLAH (RP)</th>
+                    <th className="border-r border-black p-1 w-10 text-center">NO</th>
+                    <th className="border-r border-black p-1 text-left">URAIAN BIAYA</th>
+                    <th className="p-1 w-32 text-right">JUMLAH (RP)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-black font-sans">
@@ -1454,19 +1515,19 @@ export default function AdminRawatJalanVerification() {
                 </tbody>
               </table>
 
-              <div className="grid grid-cols-2 text-center text-xs pt-8">
-                <div className="space-y-16">
+              <div className="grid grid-cols-2 text-center text-[8.5pt] pt-4 no-break">
+                <div className="space-y-8">
                   <p className="font-bold">Dokter Poli Klinik</p>
                   <p className="font-bold">( &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; )</p>
                 </div>
-                <div className="space-y-4">
+                <div className="space-y-2">
                   <p className="font-bold">Penanggung Jawab</p>
                   {selectedDetail.ttd_petugas_url ? (
-                    <div className="h-14 flex items-center justify-center">
+                    <div className="h-10 flex items-center justify-center">
                       <img src={selectedDetail.ttd_petugas_url} alt="TTD" className="max-h-full object-contain" />
                     </div>
                   ) : (
-                    <div className="h-14"></div>
+                    <div className="h-10"></div>
                   )}
                   <p className="font-bold">( {selectedDetail.petugas_input_nama || 'Petugas Admin'} )</p>
                 </div>

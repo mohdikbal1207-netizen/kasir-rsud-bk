@@ -660,6 +660,47 @@ export default function KasirRawatJalanPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col justify-between selection:bg-emerald-500 selection:text-white relative overflow-hidden">
+      {/* GLOBAL CSS UNTUK PERBAIKAN CETAK / PRINT */}
+      <style jsx global>{`
+        @media print {
+          @page {
+            size: A4 portrait;
+            margin: 12mm 10mm 12mm 10mm;
+          }
+          body {
+            background: #ffffff !important;
+            color: #000000 !important;
+            font-size: 10pt !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          .print\\:hidden {
+            display: none !important;
+          }
+          .print-container {
+            width: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+          table {
+            page-break-inside: auto;
+          }
+          tr {
+            page-break-inside: avoid;
+            page-break-after: auto;
+          }
+          thead {
+            display: table-header-group;
+          }
+          tfoot {
+            display: table-footer-group;
+          }
+          .no-break {
+            page-break-inside: avoid !important;
+          }
+        }
+      `}</style>
+
       <div className="absolute top-0 left-1/4 w-[600px] h-[600px] bg-emerald-200/30 rounded-full blur-[140px] pointer-events-none -z-10 print:hidden"></div>
         
       <div className="print:hidden">
@@ -1599,7 +1640,7 @@ export default function KasirRawatJalanPage() {
             const penunjangLainnya: any[] = penunjangObj?.lainnya || [];
 
             return (
-              <div className="max-w-2xl mx-auto space-y-3">
+              <div className="max-w-2xl mx-auto space-y-3 no-break">
                 <div className="border-b-4 border-double border-black pb-1.5 flex items-center justify-between gap-4">
                   <div className="w-14 h-14 flex-shrink-0">
                     <img src="/logo-kerinci.png" alt="Logo Kerinci" className="w-full h-full object-contain" />
@@ -1734,7 +1775,7 @@ export default function KasirRawatJalanPage() {
                 </table>
 
                 {/* TANDA TANGAN */}
-                <div className="grid grid-cols-2 text-center text-[10pt] pt-3">
+                <div className="grid grid-cols-2 text-center text-[10pt] pt-3 no-break">
                   <div className="space-y-10">
                     <p className="font-bold">Dokter Poli Klinik</p>
                     <p className="font-bold">( &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; )</p>
@@ -1769,7 +1810,7 @@ export default function KasirRawatJalanPage() {
             }
 
             return (
-              <div className="space-y-2 text-center">
+              <div className="space-y-2 text-center no-break">
                 <div>
                   <h2 className="font-bold text-xs uppercase">RSUD BUKIT KERMAN</h2>
                   <p className="text-[7pt]">Kabupaten Kerinci, Jambi</p>
@@ -1805,68 +1846,69 @@ export default function KasirRawatJalanPage() {
       {/* CETAK REKAPITULASI BIAYA MULTI PASIEN */}
       {printMode === 'recap' && (
         <div className="hidden print:block print:w-full print:bg-white print:text-black print:p-0 font-serif text-[10pt] leading-snug">
-          <div className="p-8 max-w-4xl mx-auto space-y-4">
+          <div className="p-2 max-w-4xl mx-auto space-y-3">
+            {/* KOP REKAPITULASI RESMI */}
             <div className="border-b-4 border-double border-black pb-2 flex items-center justify-between gap-4">
               <div className="w-16 h-16 flex-shrink-0">
                 <img src="/logo-kerinci.png" alt="Logo Kerinci" className="w-full h-full object-contain" />
               </div>
               <div className="text-center flex-1 space-y-0.5">
-                <h3 className="text-xs font-bold tracking-wide">PEMERINTAH KABUPATEN KERINCI</h3>
-                <h2 className="text-sm font-bold tracking-wide">DINAS KESEHATAN</h2>
-                <h1 className="text-base font-black uppercase">RSUD KELAS D BUKIT KERMAN</h1>
-                <p className="text-[9pt]">Desa Pondok, Kecamatan Bukit Kerman, Kode Pos: 37176</p>
-                <p className="text-[8pt]">Website : https://rsudbukitkerman.kerincikab.go.id &nbsp;&nbsp; e-mail: rsubukitkerman@gmail.com</p>
+                <h3 className="text-xs font-bold tracking-wide uppercase">PEMERINTAH KABUPATEN KERINCI</h3>
+                <h2 className="text-xs font-bold tracking-wide uppercase">DINAS KESEHATAN</h2>
+                <h1 className="text-sm font-black uppercase">RSUD KELAS D BUKIT KERMAN</h1>
+                <p className="text-[8pt]">Desa Pondok, Kecamatan Bukit Kerman, Kode Pos: 37176</p>
+                <p className="text-[7.5pt]">Website : https://rsudbukitkerman.kerincikab.go.id &nbsp;&nbsp; e-mail: rsubukitkerman@gmail.com</p>
               </div>
               <div className="w-16 h-16 flex-shrink-0">
                 <img src="/logo-rsud.jpeg" alt="Logo RSUD" className="w-full h-full object-contain" />
               </div>
             </div>
 
-            <div className="text-center font-bold py-2">
-              <p className="underline tracking-wider uppercase text-sm">LAPORAN REKAPITULASI BIAYA PELAYANAN RAWAT JALAN</p>
-              <p className="text-xs font-normal font-mono">Dicetak Tanggal: {new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })}</p>
+            <div className="text-center font-bold py-1">
+              <p className="underline tracking-wider uppercase text-xs sm:text-sm">LAPORAN REKAPITULASI BIAYA PELAYANAN RAWAT JALAN</p>
+              <p className="text-[9pt] font-normal font-mono">Dicetak Tanggal: {new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })}</p>
             </div>
 
-            <table className="w-full border-collapse border border-black text-xs">
+            <table className="w-full border-collapse border border-black text-[9pt]">
               <thead>
                 <tr className="border-b border-black bg-slate-100 font-bold">
-                  <th className="border-r border-black p-2 text-center w-8">NO</th>
-                  <th className="border-r border-black p-2 text-left">NO. TRANSACTION / RM</th>
-                  <th className="border-r border-black p-2 text-left">NAMA PASIEN</th>
-                  <th className="border-r border-black p-2 text-left">POLIKLINIK</th>
-                  <th className="border-r border-black p-2 text-center">PENJAMINAN</th>
-                  <th className="p-2 text-right">TOTAL (RP)</th>
+                  <th className="border-r border-black p-1.5 text-center w-8">NO</th>
+                  <th className="border-r border-black p-1.5 text-left">NO. TRANSACTION / RM</th>
+                  <th className="border-r border-black p-1.5 text-left">NAMA PASIEN</th>
+                  <th className="border-r border-black p-1.5 text-left">POLIKLINIK</th>
+                  <th className="border-r border-black p-1.5 text-center">PENJAMINAN</th>
+                  <th className="p-1.5 text-right">TOTAL (RP)</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-black font-sans">
-                {selectedTransactions.map((tx, idx) => (
+                {(selectedTxIds.length > 0 ? selectedTransactions : filteredTransactions).map((tx, idx) => (
                   <tr key={tx.id} className={tx.status_bayar === 'dibatalkan' ? 'line-through text-slate-400' : ''}>
-                    <td className="border-r border-black p-2 text-center font-mono">{idx + 1}</td>
-                    <td className="border-r border-black p-2 font-mono">
+                    <td className="border-r border-black p-1.5 text-center font-mono">{idx + 1}</td>
+                    <td className="border-r border-black p-1.5 font-mono">
                       <div>{tx.id}</div>
-                      <div className="text-[9pt] font-bold">RM: {tx.no_rm}</div>
+                      <div className="text-[8pt] font-bold">RM: {tx.no_rm}</div>
                     </td>
-                    <td className="border-r border-black p-2 font-bold">{tx.nama_pasien}</td>
-                    <td className="border-r border-black p-2">{tx.poli_tujuan}</td>
-                    <td className="border-r border-black p-2 text-center">{tx.jenis_penjaminan || 'UMUM'}</td>
-                    <td className="p-2 text-right font-mono font-bold">
+                    <td className="border-r border-black p-1.5 font-bold">{tx.nama_pasien}</td>
+                    <td className="border-r border-black p-1.5">{tx.poli_tujuan}</td>
+                    <td className="border-r border-black p-1.5 text-center">{tx.jenis_penjaminan || 'UMUM'}</td>
+                    <td className="p-1.5 text-right font-mono font-bold">
                       {tx.status_bayar === 'dibatalkan' ? '0 (VOID)' : formatRupiahTanpaSimbol(tx.total_biaya)}
                     </td>
                   </tr>
                 ))}
-                <tr className="font-bold border-t-2 border-black bg-slate-50">
-                  <td colSpan={5} className="border-r border-black p-2 text-right uppercase">GRAND TOTAL ({selectedTransactions.length} PASIEN):</td>
-                  <td className="p-2 text-right font-mono text-sm">{formatRupiahTanpaSimbol(totalSelectedBiaya)}</td>
+                <tr className="font-bold border-t-2 border-black bg-slate-50 no-break">
+                  <td colSpan={5} className="border-r border-black p-2 text-right uppercase">GRAND TOTAL ({(selectedTxIds.length > 0 ? selectedTransactions : filteredTransactions).length} PASIEN):</td>
+                  <td className="p-2 text-right font-mono text-xs font-black">{formatRupiahTanpaSimbol(selectedTxIds.length > 0 ? totalSelectedBiaya : totalAllFiltered)}</td>
                 </tr>
               </tbody>
             </table>
 
-            <div className="grid grid-cols-2 text-center text-xs pt-8">
-              <div className="space-y-16">
+            <div className="grid grid-cols-2 text-center text-[9pt] pt-4 no-break">
+              <div className="space-y-12">
                 <p className="font-bold">Mengetahui,<br/>Kepala Ruangan Kasir</p>
                 <p className="font-bold">( &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; )</p>
               </div>
-              <div className="space-y-16">
+              <div className="space-y-12">
                 <p className="font-bold">Petugas Kasir Rawat Jalan</p>
                 <p className="font-bold">( {petugasInfo.nama} )</p>
               </div>
