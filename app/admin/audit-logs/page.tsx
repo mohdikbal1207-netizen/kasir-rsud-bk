@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { Database, Download, RefreshCcw, Search, Activity, PlusCircle, Edit3, Trash2, Calendar, ChevronLeft, ChevronRight, Copy, Check, FilterX, AlertCircle, Clock, Zap, ToggleLeft, ToggleRight, ListFilter, User, Target, ArrowUp, FileJson, AlignJustify, List, Maximize2, X, ShieldAlert, UserCheck } from 'lucide-react';
+import { Database, Download, RefreshCcw, Search, Activity, PlusCircle, Edit3, Trash2, Calendar, ChevronLeft, ChevronRight, Copy, Check, FilterX, AlertCircle, Clock, Zap, ToggleLeft, ToggleRight, ListFilter, User, Target, ArrowUp, FileJson, AlignJustify, List, Maximize2, X, ShieldAlert, UserCheck, Printer, Star, Bookmark } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import AdminHeader from '@/components/admin/AdminHeader';
 import AdminFooter from '@/components/admin/AdminFooter';
@@ -22,6 +22,10 @@ export default function AuditLogsPage() {
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc'); 
   const [isLiveMode, setIsLiveMode] = useState<boolean>(false); 
   const [countdown, setCountdown] = useState<number>(15);
+
+  // State Bookmark / Flagging Log Penting untuk SPI
+  const [starredLogIds, setStarredLogIds] = useState<string[]>([]);
+  const [showStarredOnly, setShowStarredOnly] = useState<boolean>(false);
 
   // State Pagination & UI Interaktif
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -48,7 +52,6 @@ export default function AuditLogsPage() {
   const fetchLogs = async (silentLoad = false) => {
     if (!silentLoad) setIsLoading(true);
     try {
-      // 1. Ambil data users untuk mapping nama lengkap pelaku
       const { data: usersData } = await supabase.from('users').select('id, email, nama_lengkap, role, unit_kerja');
       const map: Record<string, any> = {};
       if (usersData) {
@@ -59,7 +62,6 @@ export default function AuditLogsPage() {
         setUserMap(map);
       }
 
-      // 2. Ambil data audit logs
       let query = supabase
         .from('audit_logs')
         .select('*')
@@ -83,9 +85,25 @@ export default function AuditLogsPage() {
 
   useEffect(() => {
     fetchLogs();
+    // Muat bookmark tersimpan dari localStorage jika ada
+    const savedStars = localStorage.getItem('rsud_starred_audit_logs');
+    if (savedStars) {
+      try { setStarredLogIds(JSON.parse(savedStars)); } catch (e) {}
+    }
   }, []);
 
-  // Supabase Realtime WebSockets Integration untuk Live Mode Instan
+  const toggleStarLog = (logId: string) => {
+    let updated;
+    if (starredLogIds.includes(logId)) {
+      updated = starredLogIds.filter(id => id !== logId);
+    } else {
+      updated = [...starredLogIds, logId];
+    }
+    setStarredLogIds(updated);
+    localStorage.setItem('rsud_starred_audit_logs', JSON.stringify(updated));
+  };
+
+  // Supabase Realtime WebSockets Integration
   useEffect(() => {
     if (!isLiveMode) return;
 
@@ -146,6 +164,18 @@ export default function AuditLogsPage() {
     return Array.from(new Set(users)).sort();
   }, [logs, userMap]);
 
+  // Statistik Tabel Paling Sering Berubah (Top Modified Tables)
+  const topTablesStats = useMemo(() => {
+    const counts: Record<string, number> = {};
+    logs.forEach(l => {
+      const tbl = l.table_name || 'unknown';
+      counts[tbl] = (counts[tbl] || 0) + 1;
+    });
+    return Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4);
+  }, [logs]);
+
   const filteredLogs = useMemo(() => {
     let filtered = logs.filter(log => {
       const actorKey = log.performed_by || log.admin_id || '';
@@ -161,6 +191,7 @@ export default function AuditLogsPage() {
 
       const matchesAction = actionFilter === 'ALL' || log.action === actionFilter;
       const matchesTable = tableFilter === 'ALL' || log.table_name === tableFilter;
+      const matchesStarred = !showStarredOnly || starredLogIds.includes(log.id);
       
       const resolvedUser = userMap[actorKey]?.nama_lengkap || actorKey;
       const matchesUser = userFilter === 'ALL' || resolvedUser === userFilter || log.performed_by === userFilter || log.admin_id === userFilter; 
@@ -182,7 +213,7 @@ export default function AuditLogsPage() {
         }
       }
 
-      return matchesSearch && matchesAction && matchesTable && matchesUser && matchesDate;
+      return matchesSearch && matchesAction && matchesTable && matchesUser && matchesDate && matchesStarred;
     });
 
     filtered.sort((a, b) => {
@@ -192,7 +223,7 @@ export default function AuditLogsPage() {
     });
 
     return filtered;
-  }, [logs, searchTerm, actionFilter, tableFilter, userFilter, dateFrom, dateTo, sortOrder, userMap]);
+  }, [logs, searchTerm, actionFilter, tableFilter, userFilter, dateFrom, dateTo, sortOrder, userMap, showStarredOnly, starredLogIds]);
 
   const stats = useMemo(() => {
     const total = filteredLogs.length;
@@ -210,9 +241,9 @@ export default function AuditLogsPage() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, actionFilter, tableFilter, userFilter, dateFrom, dateTo, sortOrder, itemsPerPage]);
+  }, [searchTerm, actionFilter, tableFilter, userFilter, dateFrom, dateTo, sortOrder, itemsPerPage, showStarredOnly]);
 
-  const hasActiveFilters = searchTerm !== '' || actionFilter !== 'ALL' || tableFilter !== 'ALL' || userFilter !== 'ALL' || dateFrom !== '' || dateTo !== '';
+  const hasActiveFilters = searchTerm !== '' || actionFilter !== 'ALL' || tableFilter !== 'ALL' || userFilter !== 'ALL' || dateFrom !== '' || dateTo !== '' || showStarredOnly;
   const handleResetFilters = () => {
     setSearchTerm('');
     setActionFilter('ALL');
@@ -220,6 +251,7 @@ export default function AuditLogsPage() {
     setUserFilter('ALL'); 
     setDateFrom('');
     setDateTo('');
+    setShowStarredOnly(false);
   };
 
   const setQuickDate = (daysCount: number) => {
@@ -269,6 +301,7 @@ export default function AuditLogsPage() {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
+  // Ekspor CSV dengan UTF-8 BOM agar kompatibel sempurna di Excel Indonesia
   const handleExportCSV = () => {
     if (filteredLogs.length === 0) {
       alert('Tidak ada data log untuk diekspor.');
@@ -291,10 +324,12 @@ export default function AuditLogsPage() {
         `"${log.new_data ? JSON.stringify(log.new_data).replace(/"/g, '""') : '-'}"`
       ];
     });
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
+    
+    const csvContent = '\uFEFF' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
+    link.setAttribute('href', url);
     link.setAttribute('download', `Audit_Logs_RSUD_${new Date().toISOString().slice(0, 10)}.csv`);
     document.body.appendChild(link);
     link.click();
@@ -307,13 +342,116 @@ export default function AuditLogsPage() {
       return;
     }
     const dataStr = JSON.stringify(filteredLogs, null, 2);
-    const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
+    const blob = new Blob([dataStr], { type: 'application/json;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.setAttribute('href', dataUri);
+    link.setAttribute('href', url);
     link.setAttribute('download', `Audit_Logs_RSUD_${new Date().toISOString().slice(0, 10)}.json`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  // Cetak Format Resmi RSUD untuk Akreditasi & SPI
+  const handleExportOfficialRSUDReport = () => {
+    if (filteredLogs.length === 0) {
+      alert('Tidak ada data untuk dicetak dalam laporan resmi.');
+      return;
+    }
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      alert('Gagal membuka jendela cetak. Izinkan pop-up pada browser Anda.');
+      return;
+    }
+
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html lang="id">
+      <head>
+        <meta charset="UTF-8">
+        <title>Laporan Resmi Rekapitulasi Audit Trail - RSUD Bukit Kerman</title>
+        <style>
+          body { font-family: 'Times New Roman', Times, serif; color: #000; margin: 20px; line-height: 1.3; }
+          .header { text-align: center; border-bottom: 3px double #000; padding-bottom: 10px; margin-bottom: 20px; }
+          .header h2, .header h3, .header p { margin: 2px 0; }
+          table.data-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; }
+          table.data-table th, table.data-table td { border: 1px solid #000; padding: 6px 8px; text-align: left; vertical-align: top; }
+          table.data-table th { background-color: #f2f2f2; text-align: center; }
+          .stats-box { display: flex; justify-content: space-between; margin-bottom: 15px; font-size: 12px; font-weight: bold; border: 1px solid #000; padding: 8px; background: #fafafa; }
+          .signature-section { margin-top: 40px; float: right; text-align: center; font-size: 12px; width: 250px; }
+          .signature-space { height: 60px; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h3>PEMERINTAH KABUPATEN KERINCI</h3>
+          <h2>RUMAH SAKIT UMUM DAERAH BUKIT KERMAN</h2>
+          <p style="font-size: 11px;">Jl. Raya Depati Parbo, Kabupaten Kerinci, Jambi</p>
+          <p style="font-size: 10px; font-style: italic;">Pusat Sistem Informasi & Manajemen Basis Data Rumah Sakit (SIMRS)</p>
+        </div>
+
+        <div style="text-align: center; margin-bottom: 15px;">
+          <h3 style="text-decoration: underline; margin-bottom: 5px;">LAPORAN RESMI REKAPITULASI JEJAK AUDIT DATABASE</h3>
+          <p style="font-size: 11px;">Periode Cetak: ${new Date().toLocaleDateString('id-ID', {day: '2-digit', month: 'long', year: 'numeric'})}</p>
+        </div>
+
+        <div class="stats-box">
+          <span>Total Aktivitas: ${stats.total}</span>
+          <span>Insert: ${stats.inserts}</span>
+          <span>Update: ${stats.updates}</span>
+          <span>Delete: ${stats.deletes}</span>
+        </div>
+
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>No</th>
+              <th>Waktu (WIB)</th>
+              <th>Nama Tabel</th>
+              <th>Aksi</th>
+              <th>ID Record</th>
+              <th>Nama Pelaku / Admin</th>
+              <th>Keterangan / Perubahan</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filteredLogs.map((log, index) => {
+              const actorKey = log.performed_by || log.admin_id;
+              const matchedUser = userMap[actorKey];
+              const namaPelaku = matchedUser?.nama_lengkap || actorKey || 'Sistem';
+              return `
+                <tr>
+                  <td style="text-align: center;">${index + 1}</td>
+                  <td>${new Date(log.created_at).toLocaleString('id-ID')}</td>
+                  <td><b>${log.table_name || '-'}</b></td>
+                  <td style="text-align: center;"><b>${log.action || '-'}</b></td>
+                  <td>${log.record_id || '-'}</td>
+                  <td>${namaPelaku}</td>
+                  <td>${log.description || (log.action === 'UPDATE' ? 'Pembaruan data record' : 'Aksi database sistem')}</td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+
+        <div class="signature-section">
+          <p>Kerinci, ${new Date().toLocaleDateString('id-ID', {day: '2-digit', month: 'long', year: 'numeric'})}</p>
+          <p><b>Koordinator IT / Administrator RSUD</b></p>
+          <div class="signature-space"></div>
+          <p><u><b>Tim Pengelola SIMRS</b></u></p>
+          <p style="font-size: 10px;">NIP. 19900101XXXXXXXXXX</p>
+        </div>
+
+        <script>
+          window.onload = function() { window.print(); };
+        </script>
+      </body>
+      </html>
+    `;
+
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
   };
 
   const handlePurgeLogs = async () => {
@@ -370,22 +508,21 @@ export default function AuditLogsPage() {
     return changed;
   };
 
-  // Komponen Visual Diff Viewer untuk perbandingan field secara berdampingan
   const renderVisualDiff = (oldData: any, newData: any) => {
     if (!oldData || !newData) return null;
     const allKeys = Array.from(new Set([...Object.keys(oldData), ...Object.keys(newData)]));
+    const changedKeysOnly = allKeys.filter(key => JSON.stringify(oldData[key]) !== JSON.stringify(newData[key]));
 
     return (
       <div className="space-y-1.5 my-3 font-mono text-[11px]">
-        <div className="text-[10px] font-black text-amber-400 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
-          <div className="w-2 h-2 rounded-full bg-amber-400"></div> Ringkasan Perubahan Field:
+        <div className="text-[10px] font-black text-amber-400 uppercase tracking-wider mb-1.5 flex items-center justify-between">
+          <span className="flex items-center gap-1.5">
+            <div className="w-2 h-2 rounded-full bg-amber-400"></div> Perubahan Terdeteksi ({changedKeysOnly.length} Field):
+          </span>
         </div>
-        {allKeys.map((key) => {
+        {changedKeysOnly.map((key) => {
           const valOld = JSON.stringify(oldData[key]);
           const valNew = JSON.stringify(newData[key]);
-          const isChanged = valOld !== valNew;
-
-          if (!isChanged) return null;
 
           return (
             <div key={key} className="bg-slate-900 p-2.5 rounded-xl border border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-2 shadow-inner">
@@ -550,20 +687,24 @@ export default function AuditLogsPage() {
               {isLiveMode ? <ToggleRight className="w-4 h-4 ml-1" /> : <ToggleLeft className="w-4 h-4 ml-1 text-slate-300" />}
             </button>
 
+            {/* Tombol Dropdown Ekspor & Format Resmi RSUD */}
             <div className="group relative inline-block">
               <button className="inline-flex items-center justify-center space-x-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition cursor-pointer shadow-lg shadow-emerald-600/20 active:scale-95">
                 <Download className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">Ekspor Data</span>
               </button>
-              <div className="absolute right-0 mt-2 w-36 bg-white rounded-xl shadow-xl border border-slate-200 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50">
-                <button onClick={handleExportCSV} className="w-full text-left px-4 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-50 hover:text-emerald-600 rounded-t-xl transition flex items-center gap-2">
-                   <AlignJustify className="w-3.5 h-3.5" /> Format CSV
+              <div className="absolute right-0 mt-2 w-52 bg-white rounded-2xl shadow-2xl border border-slate-200 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 overflow-hidden py-1">
+                <button onClick={handleExportOfficialRSUDReport} className="w-full text-left px-4 py-3 text-xs font-bold text-emerald-700 hover:bg-emerald-50 transition flex items-center gap-2 border-b border-slate-100">
+                   <Printer className="w-4 h-4 text-emerald-600" /> Cetak Format Resmi RSUD
                 </button>
-                <button onClick={handleExportJSON} className="w-full text-left px-4 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-50 hover:text-emerald-600 transition flex items-center gap-2">
-                   <FileJson className="w-3.5 h-3.5" /> Format JSON
+                <button onClick={handleExportCSV} className="w-full text-left px-4 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition flex items-center gap-2">
+                   <AlignJustify className="w-4 h-4 text-slate-400" /> Format Excel (CSV UTF-8)
                 </button>
-                <button onClick={() => setShowPurgeModal(true)} className="w-full text-left px-4 py-2.5 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-b-xl transition flex items-center gap-2 border-t border-slate-100">
-                   <Trash2 className="w-3.5 h-3.5" /> Bersihkan Log
+                <button onClick={handleExportJSON} className="w-full text-left px-4 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition flex items-center gap-2">
+                   <FileJson className="w-4 h-4 text-slate-400" /> Format JSON Raw
+                </button>
+                <button onClick={() => setShowPurgeModal(true)} className="w-full text-left px-4 py-2.5 text-xs font-bold text-rose-600 hover:bg-rose-50 transition flex items-center gap-2 border-t border-slate-100">
+                   <Trash2 className="w-4 h-4 text-rose-500" /> Bersihkan Log
                 </button>
               </div>
             </div>
@@ -596,54 +737,76 @@ export default function AuditLogsPage() {
           </div>
         </div>
 
-        {/* Kartu Statistik */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <div className="bg-white border border-slate-200/90 p-4 rounded-2xl shadow-sm flex items-center space-x-3 transition hover:shadow-md">
-            <div className="p-2.5 bg-slate-100 text-slate-600 rounded-xl">
-              <Activity className="w-5 h-5" />
+        {/* Kartu Statistik & Top Modified Tables */}
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+          <div className="lg:col-span-3 grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div className="bg-white border border-slate-200/90 p-4 rounded-2xl shadow-sm flex items-center space-x-3 transition hover:shadow-md">
+              <div className="p-2.5 bg-slate-100 text-slate-600 rounded-xl">
+                <Activity className="w-5 h-5" />
+              </div>
+              <div>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Terfilter</span>
+                <span className="text-lg font-black text-slate-900">{stats.total} <span className="text-[10px] text-slate-400 font-normal">({logs.length})</span></span>
+              </div>
             </div>
-            <div>
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Terfilter / Server</span>
-              <span className="text-lg font-black text-slate-900">{stats.total} <span className="text-xs font-normal text-slate-400">({logs.length} loaded)</span></span>
+            <div className="bg-white border border-slate-200/90 p-4 rounded-2xl shadow-sm flex items-center space-x-3 transition hover:shadow-md">
+              <div className="p-2.5 bg-sky-50 text-sky-600 rounded-xl border border-sky-100">
+                <PlusCircle className="w-5 h-5" />
+              </div>
+              <div>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Insert</span>
+                <span className="text-lg font-black text-sky-700">{stats.inserts}</span>
+              </div>
+            </div>
+            <div className="bg-white border border-slate-200/90 p-4 rounded-2xl shadow-sm flex items-center space-x-3 transition hover:shadow-md">
+              <div className="p-2.5 bg-amber-50 text-amber-600 rounded-xl border border-amber-100">
+                <Edit3 className="w-5 h-5" />
+              </div>
+              <div>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Update</span>
+                <span className="text-lg font-black text-amber-700">{stats.updates}</span>
+              </div>
+            </div>
+            <div className="bg-white border border-slate-200/90 p-4 rounded-2xl shadow-sm flex items-center space-x-3 transition hover:shadow-md">
+              <div className="p-2.5 bg-rose-50 text-rose-600 rounded-xl border border-rose-100">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Delete</span>
+                <span className="text-lg font-black text-rose-700">{stats.deletes}</span>
+              </div>
             </div>
           </div>
-          <div className="bg-white border border-slate-200/90 p-4 rounded-2xl shadow-sm flex items-center space-x-3 transition hover:shadow-md">
-            <div className="p-2.5 bg-sky-50 text-sky-600 rounded-xl border border-sky-100">
-              <PlusCircle className="w-5 h-5" />
+
+          {/* Widget Top Modified Tables (Ringkasan SPI) */}
+          <div className="bg-white border border-slate-200/90 p-4 rounded-2xl shadow-sm flex flex-col justify-between">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Tabel Teraktif Berubah</span>
+              <Database className="w-3.5 h-3.5 text-emerald-600" />
             </div>
-            <div>
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Insert Data</span>
-              <span className="text-lg font-black text-sky-700">{stats.inserts}</span>
-            </div>
-          </div>
-          <div className="bg-white border border-slate-200/90 p-4 rounded-2xl shadow-sm flex items-center space-x-3 transition hover:shadow-md">
-            <div className="p-2.5 bg-amber-50 text-amber-600 rounded-xl border border-amber-100">
-              <Edit3 className="w-5 h-5" />
-            </div>
-            <div>
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Update Data</span>
-              <span className="text-lg font-black text-amber-700">{stats.updates}</span>
-            </div>
-          </div>
-          <div className="bg-white border border-slate-200/90 p-4 rounded-2xl shadow-sm flex items-center space-x-3 transition hover:shadow-md">
-            <div className="p-2.5 bg-rose-50 text-rose-600 rounded-xl border border-rose-100">
-              <Trash2 className="w-5 h-5" />
-            </div>
-            <div>
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Delete Data</span>
-              <span className="text-lg font-black text-rose-700">{stats.deletes}</span>
+            <div className="space-y-1.5">
+              {topTablesStats.length === 0 ? (
+                <span className="text-xs text-slate-400">Belum ada data</span>
+              ) : (
+                topTablesStats.map(([tbl, count]) => (
+                  <div key={tbl} className="flex items-center justify-between text-[11px]">
+                    <span className="font-bold text-slate-700 truncate max-w-[120px]" title={tbl}>{tbl}</span>
+                    <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md font-mono font-bold text-[10px]">{count}</span>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>
 
-        {/* Kontrol Utama & Tabel */}
+        {/* Kontrol Utama & Filter */}
         <div className="bg-white border border-slate-200/90 rounded-3xl p-6 sm:p-8 shadow-xl shadow-slate-200/50 space-y-6 relative">
           
-          <div className="flex flex-col xl:flex-row items-start xl:items-center justify-between gap-4">
+          <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
             
-            <div className="flex flex-col md:flex-row items-start md:items-center gap-3 w-full xl:w-auto">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 flex-1">
               
-              <div className="relative flex-1 w-full md:w-56 group">
+              <div className="relative group">
                 <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 group-focus-within:text-emerald-500 transition-colors" />
                 <input 
                   ref={searchInputRef}
@@ -651,19 +814,19 @@ export default function AuditLogsPage() {
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   placeholder="Cari kata kunci..."
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-12 py-2 text-xs focus:outline-none focus:border-emerald-500 transition focus:bg-white"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-10 py-2.5 text-xs focus:outline-none focus:border-emerald-500 transition focus:bg-white"
                 />
-                <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-0.5 text-[9px] font-bold text-slate-400 border border-slate-200 bg-white px-1.5 py-0.5 rounded pointer-events-none">
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-400 border border-slate-200 bg-white px-1.5 py-0.5 rounded pointer-events-none">
                   /
-                </div>
+                </span>
               </div>
 
-              <div className="relative w-full md:w-44">
+              <div className="relative">
                 <ListFilter className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <select 
                   value={tableFilter}
                   onChange={(e) => setTableFilter(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-8 py-2 text-xs focus:outline-none focus:border-emerald-500 transition focus:bg-white appearance-none cursor-pointer font-bold text-slate-600 truncate"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-8 py-2.5 text-xs focus:outline-none focus:border-emerald-500 transition focus:bg-white appearance-none cursor-pointer font-bold text-slate-600 truncate"
                 >
                   <option value="ALL">Semua Tabel</option>
                   {uniqueTables.map(tbl => (
@@ -672,12 +835,12 @@ export default function AuditLogsPage() {
                 </select>
               </div>
 
-              <div className="relative w-full md:w-44">
+              <div className="relative">
                 <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <select 
                   value={userFilter}
                   onChange={(e) => setUserFilter(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-8 py-2 text-xs focus:outline-none focus:border-emerald-500 transition focus:bg-white appearance-none cursor-pointer font-bold text-slate-600 truncate"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-8 py-2.5 text-xs focus:outline-none focus:border-emerald-500 transition focus:bg-white appearance-none cursor-pointer font-bold text-slate-600 truncate"
                 >
                   <option value="ALL">Semua User</option>
                   {uniqueUsers.map(usr => (
@@ -686,122 +849,158 @@ export default function AuditLogsPage() {
                 </select>
               </div>
 
-              <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-2 sm:space-y-0 sm:space-x-2 w-full md:w-auto">
-                <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 focus-within:border-emerald-500 focus-within:bg-white transition w-full sm:w-auto">
-                  <Calendar className="w-4 h-4 text-slate-400 mr-2 shrink-0" />
-                  <input 
-                    type="date" 
-                    value={dateFrom}
-                    onChange={(e) => setDateFrom(e.target.value)}
-                    className="bg-transparent text-xs text-slate-700 focus:outline-none w-full sm:w-28 cursor-pointer"
-                  />
-                  <span className="mx-1.5 text-slate-400 text-xs font-bold">-</span>
-                  <input 
-                    type="date" 
-                    value={dateTo}
-                    onChange={(e) => setDateTo(e.target.value)}
-                    className="bg-transparent text-xs text-slate-700 focus:outline-none w-full sm:w-28 cursor-pointer"
-                  />
-                </div>
-                
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <button 
-                    onClick={() => setQuickDate(0)}
-                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 text-[10px] font-bold text-slate-600 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200 transition"
-                  >
-                    <Clock className="w-3 h-3" /> Hari Ini
-                  </button>
-                  <button 
-                    onClick={() => setQuickDate(7)}
-                    className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-[10px] font-bold text-slate-600 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200 transition"
-                  >
-                    7 Hari
-                  </button>
-                </div>
+              <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 focus-within:border-emerald-500 focus-within:bg-white transition">
+                <Calendar className="w-4 h-4 text-slate-400 mr-2 shrink-0" />
+                <input 
+                  type="date" 
+                  value={dateFrom}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                  className="bg-transparent text-[11px] text-slate-700 focus:outline-none w-full cursor-pointer"
+                />
+                <span className="mx-1 text-slate-400 text-xs font-bold">-</span>
+                <input 
+                  type="date" 
+                  value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  className="bg-transparent text-[11px] text-slate-700 focus:outline-none w-full cursor-pointer"
+                />
               </div>
+
             </div>
 
-            <div className="flex items-center gap-2 w-full xl:w-auto overflow-x-auto pb-2 xl:pb-0 scrollbar-hide shrink-0">
+            <div className="flex items-center gap-2 shrink-0">
+              <button 
+                onClick={() => setQuickDate(0)}
+                className="px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200 transition flex items-center gap-1.5 bg-slate-50"
+              >
+                <Clock className="w-3.5 h-3.5" /> Hari Ini
+              </button>
+              <button 
+                onClick={() => setQuickDate(7)}
+                className="px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200 transition bg-slate-50"
+              >
+                7 Hari
+              </button>
+            </div>
+
+          </div>
+
+          {/* Tombol Filter Aksi Cepat & Bookmark SPI */}
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider mr-1">Filter Aksi:</span>
               {['ALL', 'INSERT', 'UPDATE', 'DELETE'].map((action) => (
                 <button
                   key={action}
                   onClick={() => setActionFilter(action)}
-                  className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition cursor-pointer whitespace-nowrap ${
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap shadow-sm ${
                     actionFilter === action 
-                      ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20' 
+                      ? 'bg-emerald-600 text-white shadow-emerald-600/20' 
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}
                 >
                   {action}
                 </button>
               ))}
-              
-              {hasActiveFilters && (
-                <button 
-                  onClick={handleResetFilters}
-                  className="px-3 py-1.5 rounded-xl text-[11px] font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-100 flex items-center gap-1 transition whitespace-nowrap ml-1"
-                >
-                  <FilterX className="w-3.5 h-3.5" />
-                  Reset
-                </button>
-              )}
+
+              <button
+                onClick={() => setShowStarredOnly(!showStarredOnly)}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm ${
+                  showStarredOnly
+                    ? 'bg-amber-500 text-white shadow-amber-500/20'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+                title="Tampilkan log yang ditandai (Starred Logs)"
+              >
+                <Star className={`w-3.5 h-3.5 ${showStarredOnly ? 'fill-white' : 'text-amber-500'}`} />
+                <span>Ditandai ({starredLogIds.length})</span>
+              </button>
             </div>
 
+            {hasActiveFilters && (
+              <button 
+                onClick={handleResetFilters}
+                className="px-3 py-1.5 rounded-xl text-xs font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 flex items-center gap-1.5 transition"
+              >
+                <FilterX className="w-3.5 h-3.5" />
+                Reset Semua Filter
+              </button>
+            )}
           </div>
 
-          {/* Chips Filter Aktif Cepat */}
+          {/* Pintasan Tabel Krusial Rumah Sakit */}
+          <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
+            <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider mr-1">Pintasan Tabel Krusial:</span>
+            {['pasien', 'billing', 'transaksi_obat', 'users'].map((tblKey) => {
+              const isSelected = tableFilter === tblKey;
+              return (
+                <button
+                  key={tblKey}
+                  onClick={() => setTableFilter(isSelected ? 'ALL' : tblKey)}
+                  className={`px-3 py-1 rounded-lg text-[11px] font-bold transition border ${
+                    isSelected 
+                      ? 'bg-slate-900 text-white border-slate-900 shadow' 
+                      : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                  }`}
+                >
+                  🗄️ {tblKey}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Chips Filter Aktif */}
           {hasActiveFilters && (
-            <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-100">
+            <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Filter Aktif:</span>
               {searchTerm && (
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 border border-slate-200 text-slate-700 rounded-lg text-[11px] font-medium">
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 border border-slate-200 text-slate-700 rounded-lg text-xs font-medium">
                   Keyword: &quot;{searchTerm}&quot;
                   <button onClick={() => setSearchTerm('')} className="hover:text-rose-600"><X className="w-3 h-3" /></button>
                 </span>
               )}
               {actionFilter !== 'ALL' && (
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-lg text-[11px] font-medium">
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-lg text-xs font-medium">
                   Aksi: {actionFilter}
                   <button onClick={() => setActionFilter('ALL')} className="hover:text-rose-600"><X className="w-3 h-3" /></button>
                 </span>
               )}
               {tableFilter !== 'ALL' && (
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-50 border border-blue-200 text-blue-700 rounded-lg text-[11px] font-medium">
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-50 border border-blue-200 text-blue-700 rounded-lg text-xs font-medium">
                   Tabel: {tableFilter}
                   <button onClick={() => setTableFilter('ALL')} className="hover:text-rose-600"><X className="w-3 h-3" /></button>
                 </span>
               )}
-              {userFilter !== 'ALL' && (
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-purple-50 border border-purple-200 text-purple-700 rounded-lg text-[11px] font-medium">
-                  User: {userFilter}
-                  <button onClick={() => setUserFilter('ALL')} className="hover:text-rose-600"><X className="w-3 h-3" /></button>
-                </span>
-              )}
-              {(dateFrom || dateTo) && (
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-50 border border-amber-200 text-amber-700 rounded-lg text-[11px] font-medium">
-                  Tanggal: {dateFrom || '...'} s.d {dateTo || '...'}
-                  <button onClick={() => { setDateFrom(''); setDateTo(''); }} className="hover:text-rose-600"><X className="w-3 h-3" /></button>
+              {showStarredOnly && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-50 border border-amber-200 text-amber-700 rounded-lg text-xs font-medium">
+                  Mode: Ditandai SPI
+                  <button onClick={() => setShowStarredOnly(false)} className="hover:text-rose-600"><X className="w-3 h-3" /></button>
                 </span>
               )}
             </div>
           )}
 
+          {/* Tabel Utama */}
           <div className="overflow-x-auto rounded-2xl border border-slate-200 shadow-sm relative max-h-[600px] overflow-y-auto">
             <table className="w-full text-left text-xs relative">
               <thead className="bg-slate-100 text-slate-500 uppercase font-black tracking-wider text-[10px] sticky top-0 z-20 shadow-sm outline outline-1 outline-slate-200">
                 <tr>
-                  <th className={`${tdPad} border-b border-slate-200 w-32 bg-slate-100 transition-all`}>Waktu</th>
-                  <th className={`${tdPad} border-b border-slate-200 bg-slate-100 transition-all`}>Nama Tabel</th>
-                  <th className={`${tdPad} border-b border-slate-200 text-center bg-slate-100 transition-all`}>Aksi</th>
-                  <th className={`${tdPad} border-b border-slate-200 bg-slate-100 transition-all`}>ID Record</th>
-                  <th className={`${tdPad} border-b border-slate-200 bg-slate-100 transition-all`}>Admin / Nama Pelaku</th>
-                  <th className={`${tdPad} border-b border-slate-200 bg-slate-100 transition-all`}>Payload Data (JSON / Detail)</th>
+                  <th className={`${tdPad} border-b border-slate-200 w-12 text-center bg-slate-100`}>
+                    <Star className="w-3.5 h-3.5 mx-auto text-slate-400" />
+                  </th>
+                  <th className={`${tdPad} border-b border-slate-200 w-32 bg-slate-100`}>Waktu</th>
+                  <th className={`${tdPad} border-b border-slate-200 bg-slate-100`}>Nama Tabel</th>
+                  <th className={`${tdPad} border-b border-slate-200 text-center bg-slate-100`}>Aksi</th>
+                  <th className={`${tdPad} border-b border-slate-200 bg-slate-100`}>ID Record</th>
+                  <th className={`${tdPad} border-b border-slate-200 bg-slate-100`}>Admin / Nama Pelaku</th>
+                  <th className={`${tdPad} border-b border-slate-200 bg-slate-100`}>Payload Data (JSON / Detail)</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium bg-white">
                 {isLoading && logs.length === 0 ? (
                   [...Array(10)].map((_, i) => (
                     <tr key={`skeleton-${i}`} className="animate-pulse border-l-4 border-l-slate-200 bg-white hover:bg-transparent">
+                      <td className={tdPad}><div className="h-4 bg-slate-200 rounded w-4 mx-auto"></div></td>
                       <td className={tdPad}><div className="h-3.5 bg-slate-200 rounded w-20 mb-2"></div><div className="h-2.5 bg-slate-100 rounded w-12"></div></td>
                       <td className={tdPad}><div className="h-6 bg-slate-100 rounded-lg w-24"></div></td>
                       <td className={tdPad}><div className="h-6 bg-slate-100 rounded-lg w-16 mx-auto"></div></td>
@@ -812,7 +1011,7 @@ export default function AuditLogsPage() {
                   ))
                 ) : currentDisplayedLogs.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="text-center py-24 text-slate-400 bg-slate-50/50">
+                    <td colSpan={7} className="text-center py-24 text-slate-400 bg-slate-50/50">
                       <div className="flex flex-col items-center justify-center space-y-3">
                         <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-2">
                           <AlertCircle className="w-8 h-8 text-slate-300" />
@@ -836,6 +1035,7 @@ export default function AuditLogsPage() {
 
                     const changedFields = log.action === 'UPDATE' ? getChangedFields(log.old_data, log.new_data) : [];
                     const relativeTime = getRelativeTime(log.created_at); 
+                    const isStarred = starredLogIds.includes(log.id);
                     
                     return (
                       <tr key={log.id} className={`hover:bg-slate-50 transition duration-150 group/row border-l-4 ${
@@ -843,7 +1043,16 @@ export default function AuditLogsPage() {
                         log.action === 'UPDATE' ? 'border-l-amber-400' :
                         log.action === 'DELETE' ? 'border-l-rose-400' : 'border-l-transparent'
                       }`}>
-                        <td className={`${tdPad} text-slate-500 font-mono whitespace-nowrap align-top transition-all`}>
+                        <td className={`${tdPad} text-center align-top`}>
+                          <button
+                            onClick={() => toggleStarLog(log.id)}
+                            className="p-1 rounded-lg hover:bg-amber-50 text-slate-300 hover:text-amber-500 transition"
+                            title={isStarred ? "Batalkan tanda" : "Tandai log penting untuk SPI"}
+                          >
+                            <Star className={`w-4 h-4 ${isStarred ? 'fill-amber-400 text-amber-500' : ''}`} />
+                          </button>
+                        </td>
+                        <td className={`${tdPad} text-slate-500 font-mono whitespace-nowrap align-top`}>
                           <div className="flex flex-col">
                             <span className="text-slate-800 font-bold">{new Date(log.created_at).toLocaleDateString('id-ID', {day: '2-digit', month: 'short', year: 'numeric'})}</span>
                             <span className="text-[10px] text-slate-400">{new Date(log.created_at).toLocaleTimeString('id-ID')}</span>
@@ -854,12 +1063,12 @@ export default function AuditLogsPage() {
                             )}
                           </div>
                         </td>
-                        <td className={`${tdPad} font-bold text-slate-900 align-top transition-all`}>
+                        <td className={`${tdPad} font-bold text-slate-900 align-top`}>
                           <span className={`px-3 py-1.5 rounded-lg border text-[11px] ${getTableColor(log.table_name)}`}>
                             {log.table_name || '-'}
                           </span>
                         </td>
-                        <td className={`${tdPad} text-center align-top transition-all`}>
+                        <td className={`${tdPad} text-center align-top`}>
                           <span className={`inline-block px-3 py-1.5 rounded-lg text-[10px] font-black tracking-widest ${
                             log.action === 'INSERT' ? 'bg-sky-100 text-sky-700 border border-sky-200' :
                             log.action === 'UPDATE' ? 'bg-amber-100 text-amber-700 border border-amber-200' :
@@ -868,7 +1077,7 @@ export default function AuditLogsPage() {
                             {log.action || 'INFO'}
                           </span>
                         </td>
-                        <td className={`${tdPad} text-slate-500 font-mono text-[11px] align-top transition-all`}>
+                        <td className={`${tdPad} text-slate-500 font-mono text-[11px] align-top`}>
                           {log.record_id ? (
                             <div className="flex items-center gap-1.5 group/isolate max-w-[140px]">
                               <span className="bg-slate-100 px-2 py-1 rounded-md text-slate-600 border border-slate-200 truncate" title={log.record_id}>
@@ -886,7 +1095,7 @@ export default function AuditLogsPage() {
                             <span className="bg-slate-100 px-2 py-1 rounded-md text-slate-600 border border-slate-200">-</span>
                           )}
                         </td>
-                        <td className={`${tdPad} align-top transition-all`}>
+                        <td className={`${tdPad} align-top`}>
                           <div className="flex flex-col max-w-[180px]">
                              <span className="text-slate-900 font-bold truncate flex items-center gap-1" title={namaPelaku}>
                                <UserCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
@@ -904,7 +1113,7 @@ export default function AuditLogsPage() {
                              )}
                           </div>
                         </td>
-                        <td className={`${tdPad} text-slate-600 font-mono align-top w-[40%] transition-all`}>
+                        <td className={`${tdPad} text-slate-600 font-mono align-top w-[40%]`}>
                           <div className="flex items-center gap-2">
                             <details className="cursor-pointer group/details relative flex-1">
                               <summary className="text-emerald-600 font-bold hover:text-emerald-700 inline-flex items-center space-x-1.5 select-none outline-none bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-100 transition group-open/details:bg-emerald-100">
@@ -941,7 +1150,6 @@ export default function AuditLogsPage() {
                                   </div>
                                 )}
 
-                                {/* Visual Diff Viewer untuk Update */}
                                 {log.action === 'UPDATE' && renderVisualDiff(log.old_data, log.new_data)}
 
                                 {log.action === 'UPDATE' && log.old_data && log.new_data ? (
@@ -976,7 +1184,6 @@ export default function AuditLogsPage() {
                               </div>
                             </details>
 
-                            {/* Tombol Inspector Modal */}
                             <button
                               onClick={() => setInspectModalData({
                                 isOpen: true,
@@ -1009,7 +1216,7 @@ export default function AuditLogsPage() {
                 <select 
                   value={itemsPerPage}
                   onChange={(e) => setItemsPerPage(Number(e.target.value))}
-                  className="bg-slate-50 border border-slate-200 text-slate-600 text-xs rounded-lg px-2 py-1.5 focus:outline-none focus:border-emerald-500 font-bold cursor-pointer"
+                  className="bg-slate-50 border border-slate-200 text-slate-600 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-emerald-500 font-bold cursor-pointer"
                 >
                   <option value={20}>20 baris</option>
                   <option value={50}>50 baris</option>
