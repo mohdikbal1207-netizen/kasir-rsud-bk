@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Database, Download, RefreshCcw, Search, Activity, PlusCircle, Edit3, Trash2, Calendar, ChevronLeft, ChevronRight, Copy, Check, FilterX, AlertCircle, Clock, Zap, ToggleLeft, ToggleRight, ListFilter, User, Target, ArrowUp, FileJson, AlignJustify, List, Maximize2, X, ShieldAlert, UserCheck, Printer, Star, Bookmark } from 'lucide-react';
+import { Database, Download, RefreshCcw, Search, Activity, PlusCircle, Edit3, Trash2, Calendar, ChevronLeft, ChevronRight, Copy, Check, FilterX, AlertCircle, Clock, Zap, ToggleLeft, ToggleRight, ListFilter, User, Target, ArrowUp, FileJson, AlignJustify, List, Maximize2, X, ShieldAlert, UserCheck, Printer, Star } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import AdminHeader from '@/components/admin/AdminHeader';
 import AdminFooter from '@/components/admin/AdminFooter';
@@ -21,7 +21,6 @@ export default function AuditLogsPage() {
   const [dateTo, setDateTo] = useState<string>('');
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc'); 
   const [isLiveMode, setIsLiveMode] = useState<boolean>(false); 
-  const [countdown, setCountdown] = useState<number>(15);
 
   // State Bookmark / Flagging Log Penting untuk SPI
   const [starredLogIds, setStarredLogIds] = useState<string[]>([]);
@@ -49,10 +48,14 @@ export default function AuditLogsPage() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
-  const fetchLogs = async (silentLoad = false) => {
+  // Optimasi fetchLogs dengan kolom spesifik dan pembatasan limit
+  const fetchLogs = useCallback(async (silentLoad = false) => {
     if (!silentLoad) setIsLoading(true);
     try {
-      const { data: usersData } = await supabase.from('users').select('id, email, nama_lengkap, role, unit_kerja');
+      const { data: usersData } = await supabase
+        .from('users')
+        .select('id, email, nama_lengkap, role, unit_kerja');
+
       const map: Record<string, any> = {};
       if (usersData) {
         usersData.forEach(u => {
@@ -62,13 +65,11 @@ export default function AuditLogsPage() {
         setUserMap(map);
       }
 
-      let query = supabase
+      const { data, error } = await supabase
         .from('audit_logs')
-        .select('*')
+        .select('id, created_at, table_name, action, record_id, admin_id, performed_by, description, old_data, new_data')
         .order('created_at', { ascending: false })
-        .limit(1000); 
-
-      const { data, error } = await query;
+        .limit(200);
 
       if (!error && data) {
         setLogs(data);
@@ -81,16 +82,15 @@ export default function AuditLogsPage() {
     } finally {
       if (!silentLoad) setIsLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchLogs();
-    // Muat bookmark tersimpan dari localStorage jika ada
     const savedStars = localStorage.getItem('rsud_starred_audit_logs');
     if (savedStars) {
       try { setStarredLogIds(JSON.parse(savedStars)); } catch (e) {}
     }
-  }, []);
+  }, [fetchLogs]);
 
   const toggleStarLog = (logId: string) => {
     let updated;
@@ -103,32 +103,25 @@ export default function AuditLogsPage() {
     localStorage.setItem('rsud_starred_audit_logs', JSON.stringify(updated));
   };
 
-  // Supabase Realtime WebSockets Integration
+  // Supabase Realtime WebSockets Integration (DIOPTIMALKAN UNTUK HEMAT LOG INGESTION & EGRESS)
   useEffect(() => {
     if (!isLiveMode) return;
 
     const channel = supabase
-      .channel('audit_logs_realtime')
+      .channel('audit_logs_realtime_optimized')
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'audit_logs' },
+        { event: 'INSERT', schema: 'public', table: 'audit_logs' },
         (payload) => {
-          if (payload.eventType === 'INSERT') {
-            setLogs((prev) => [payload.new, ...prev]);
+          if (payload.new) {
+            setLogs((prev) => [payload.new, ...prev.slice(0, 199)]);
           }
         }
       )
       .subscribe();
 
-    let timerInterval: NodeJS.Timeout;
-    setCountdown(15);
-    timerInterval = setInterval(() => {
-      setCountdown((prev) => (prev > 1 ? prev - 1 : 15));
-    }, 1000);
-
     return () => {
       supabase.removeChannel(channel);
-      clearInterval(timerInterval);
     };
   }, [isLiveMode]);
 
@@ -301,7 +294,7 @@ export default function AuditLogsPage() {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  // Ekspor CSV dengan UTF-8 BOM agar kompatibel sempurna di Excel Indonesia
+  // Ekspor CSV dengan UTF-8 BOM
   const handleExportCSV = () => {
     if (filteredLogs.length === 0) {
       alert('Tidak ada data log untuk diekspor.');
@@ -663,7 +656,7 @@ export default function AuditLogsPage() {
               Daftar Jejak Audit (Audit Trail)
               {isLiveMode && (
                 <span className="flex items-center gap-1.5 bg-rose-100 text-rose-700 px-2.5 py-0.5 rounded-full text-[10px] uppercase tracking-widest font-black border border-rose-200 animate-pulse">
-                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span> Live ({countdown}s)
+                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span> Live WebSocket
                 </span>
               )}
             </h1>
@@ -680,7 +673,7 @@ export default function AuditLogsPage() {
                 ? 'bg-rose-50 border-rose-200 text-rose-600' 
                 : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-600'
               }`}
-              title="Aktifkan Auto-Refresh setiap 15 detik"
+              title="Aktifkan Realtime WebSocket"
             >
               <Zap className={`w-3.5 h-3.5 ${isLiveMode ? 'text-rose-500 fill-rose-500' : 'text-slate-400'}`} />
               <span className="hidden sm:inline">Live Mode</span>

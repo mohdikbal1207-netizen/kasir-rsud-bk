@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { 
   Bell, Sparkles, CheckCircle2, Volume2, VolumeX, Check, Trash2, 
@@ -20,11 +20,11 @@ interface Notification {
   is_read: boolean;
   link?: string;
   created_at: string;
-  is_pinned?: boolean; // Fitur Tambahan: Sticky Pin
+  is_pinned?: boolean;
 }
 
 interface NotificationBellProps {
-  currentRole: string; // 'admin' | 'kasir' | 'manajemen' | 'admin_verifikator'
+  currentRole: string;
 }
 
 export default function NotificationBell({ currentRole }: NotificationBellProps) {
@@ -38,7 +38,7 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date>(new Date());
   const [isOnline, setIsOnline] = useState<boolean>(true);
   
-  // Preferensi Suara & Speech + Kustom Volume Suara Baru + Mode DND
+  // Preferensi Suara & DND
   const [soundEnabled, setSoundEnabled] = useState<boolean>(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("notif_sound_enabled");
@@ -70,26 +70,28 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
     }
     return false;
   });
-  
-  // State Filter Tab, Kategori, Role, & Rentang Waktu
+
+  // Ref untuk menghindari stale closure pada callback realtime tanpa trigger re-subscribing WebSocket
+  const audioPrefsRef = useRef({ soundEnabled, speechEnabled, soundVolume, dndMode });
+  useEffect(() => {
+    audioPrefsRef.current = { soundEnabled, speechEnabled, soundVolume, dndMode };
+  }, [soundEnabled, speechEnabled, soundVolume, dndMode]);
+
+  // State Filters
   const [filterTab, setFilterTab] = useState<"all" | "unread" | "alert" | "info" | "rejected">("all");
   const [roleFilter, setRoleFilter] = useState<"all_roles" | "role_only" | "system_all">("all_roles");
   const [timeRangeFilter, setTimeRangeFilter] = useState<"all" | "today" | "week">("all");
   const [searchQuery, setSearchQuery] = useState<string>("");
   
-  // State UI Tambahan: Quick Copy, Settings Panel Internal, Clear Confirm Modal, & Batch Selection Mode
+  // State UI
   const [showClearConfirmModal, setShowClearConfirmModal] = useState<boolean>(false);
   const [showSettingsPanel, setShowSettingsPanel] = useState<boolean>(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isBatchMode, setIsBatchMode] = useState<boolean>(false);
-  
-  // Toast Preview untuk Notifikasi Realtime Baru
   const [latestToast, setLatestToast] = useState<Notification | null>(null);
 
   const dropdownRef = useRef<HTMLDivElement>(null);
-
-  // Helper untuk menentukan apakah role saat ini adalah Admin
   const isAdminRole = currentRole?.toLowerCase().includes("admin");
 
   // Simpan preferensi ke localStorage
@@ -102,40 +104,14 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
     }
   }, [soundEnabled, speechEnabled, soundVolume, dndMode]);
 
-  // Listener Network Online/Offline State
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const handleOnline = () => {
-      setIsOnline(true);
-      fetchNotifications();
-    };
-    const handleOffline = () => setIsOnline(false);
-
-    window.addEventListener("online", handleOnline);
-    window.addEventListener("offline", handleOffline);
-    return () => {
-      window.removeEventListener("online", handleOnline);
-      window.removeEventListener("offline", handleOffline);
-    };
-  }, []);
-
-  // Request Izin Web Native Push Notification Browser
-  useEffect(() => {
-    if (typeof window !== "undefined" && "Notification" in window) {
-      if (Notification.permission === "default") {
-        Notification.requestPermission();
-      }
-    }
-  }, []);
-
-  // 🔊 SINTESIS AUDIO BUATAN (Chime Nada D5 -> A5 dengan kontrol Volume Dinamis & DND)
-  const playChimeSound = () => {
+  // Audio & Speech Handlers
+  const playChimeSound = useCallback(() => {
+    const { soundEnabled, soundVolume, dndMode } = audioPrefsRef.current;
     if (!soundEnabled || dndMode) return;
     try {
       const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       if (!AudioCtx) return;
       const ctx = new AudioCtx();
-      
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
 
@@ -151,28 +127,26 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
 
       osc.start();
       osc.stop(ctx.currentTime + 0.3);
-    } catch {
-      // Abaikan jika browser memblokir autostart audio
-    }
-  };
+    } catch {}
+  }, []);
 
-  // 🗣️ TEXT-TO-SPEECH (Pembacaan Judul Otomatis dengan Kontrol Volume & DND)
-  const speakNotificationTitle = (title: string) => {
+  const speakNotificationTitle = useCallback((title: string) => {
+    const { speechEnabled, soundVolume, dndMode } = audioPrefsRef.current;
     if (!speechEnabled || dndMode || typeof window === "undefined" || !("speechSynthesis" in window)) return;
     try {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(title);
       utterance.lang = "id-ID";
       utterance.rate = 1.0;
-      utterance.volume = soundVolume * 5; // Scaling volume speech
+      utterance.volume = soundVolume * 5;
       window.speechSynthesis.speak(utterance);
     } catch (err) {
       console.error("Gagal menjalankan Text-to-Speech:", err);
     }
-  };
+  }, []);
 
-  // 📢 NATIVE BROWSER PUSH NOTIFICATION
-  const triggerNativeDesktopNotif = (notif: Notification) => {
+  const triggerNativeDesktopNotif = useCallback((notif: Notification) => {
+    const { dndMode } = audioPrefsRef.current;
     if (dndMode) return;
     if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
       if (document.hidden) {
@@ -182,19 +156,18 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
         });
       }
     }
-  };
+  }, []);
 
-  // Fetch Data Notifikasi Utama dari Supabase (PERBAIKAN: Admin Membaca Semua Notifikasi)
-  const fetchNotifications = async (limitCount = pageLimit) => {
+  // ✅ OPTIMASI 1: Ambil hanya kolom yang diperlukan untuk hemat Egress
+  const fetchNotifications = useCallback(async (limitCount = pageLimit) => {
     setIsLoading(true);
 
     let query = supabase
       .from("notifications")
-      .select("*")
+      .select("id, title, message, role, is_read, link, created_at, is_pinned")
       .order("created_at", { ascending: false })
       .limit(limitCount);
 
-    // Jika BUKAN Admin, filter berdasarkan role spesifik. Jika ADMIN, ambil seluruhnya (Kasir, Rajal, Ranap, IGD, dsb.)
     if (!isAdminRole) {
       query = query.or(`role.eq.${currentRole},role.eq.all,role.eq.kasir`);
     }
@@ -207,14 +180,38 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
       setLastRefreshedAt(new Date());
     }
     setIsLoading(false);
-  };
+  }, [currentRole, isAdminRole, pageLimit]);
 
-  // 1. Ambil Data Notifikasi & Dengar Realtime via Supabase (PERBAIKAN: Realtime Listener Admin Bebas Filter Role)
+  // Network State Listener
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleOnline = () => {
+      setIsOnline(true);
+      fetchNotifications();
+    };
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, [fetchNotifications]);
+
+  // Request Native Permission
+  useEffect(() => {
+    if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, []);
+
+  // ✅ OPTIMASI 2: Realtime Listener Terisolasi & Tanpa Interval Polling
   useEffect(() => {
     fetchNotifications();
 
     const channel = supabase
-      .channel(`realtime-bell-v8-${currentRole}`)
+      .channel(`realtime-bell-v9-${currentRole}`)
       .on(
         "postgres_changes",
         {
@@ -224,8 +221,6 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
         },
         (payload) => {
           const newNotif = { ...(payload.new as Notification), is_pinned: false };
-          
-          // PERBAIKAN: Jika Admin, terima SEMUA notifikasi baru tanpa melihat role target
           const isTargetForUser = isAdminRole || newNotif.role === currentRole || newNotif.role === "all" || newNotif.role === "kasir";
 
           if (isTargetForUser) {
@@ -234,8 +229,7 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
             speakNotificationTitle(newNotif.title);
             triggerNativeDesktopNotif(newNotif);
             
-            // Tampilkan Toast Preview melayang selama 4 detik jika tidak DND
-            if (!dndMode) {
+            if (!audioPrefsRef.current.dndMode) {
               setLatestToast(newNotif);
               setTimeout(() => {
                 setLatestToast((curr) => (curr?.id === newNotif.id ? null : curr));
@@ -248,20 +242,12 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
         setIsRealtimeConnected(status === "SUBSCRIBED");
       });
 
-    // Auto-Retry Fetch jika koneksi realtime offline setiap 15 detik
-    const fallbackInterval = setInterval(() => {
-      if (!isRealtimeConnected) {
-        fetchNotifications();
-      }
-    }, 15000);
-
     return () => {
       supabase.removeChannel(channel);
-      clearInterval(fallbackInterval);
     };
-  }, [currentRole, soundEnabled, speechEnabled, isRealtimeConnected, soundVolume, dndMode]);
+  }, [currentRole, isAdminRole, fetchNotifications, playChimeSound, speakNotificationTitle, triggerNativeDesktopNotif]);
 
-  // 2. Listener Click Outside, Keyboard ESC, & Global Hotkey (Alt + N)
+  // Click Outside & Hotkey Listener
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
@@ -271,14 +257,12 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      // ESC Key
       if (event.key === "Escape") {
         setIsOpen(false);
         setShowClearConfirmModal(false);
         setShowSettingsPanel(false);
         setIsBatchMode(false);
       }
-      // Hotkey Alt + N untuk Toggle Notifikasi
       if (event.altKey && (event.key === "n" || event.key === "N")) {
         event.preventDefault();
         setIsOpen((prev) => !prev);
@@ -293,39 +277,32 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
     };
   }, []);
 
-  // 3. Handler Tandai Semua Sudah Dibaca
+  // Action Handlers
   const handleMarkAllAsRead = async () => {
     setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
-
     let query = supabase.from("notifications").update({ is_read: true }).eq("is_read", false);
     if (!isAdminRole) {
       query = query.or(`role.eq.${currentRole},role.eq.all`);
     }
-
     await query;
   };
 
-  // 4. Handler Hapus Semua Notifikasi (Clear All)
   const handleConfirmClearAll = async () => {
     setShowClearConfirmModal(false);
     setNotifications([]);
-    
     let query = supabase.from("notifications").delete();
     if (!isAdminRole) {
       query = query.or(`role.eq.${currentRole},role.eq.all`);
     }
-    
     await query;
   };
 
-  // 5. Handler Hapus Satu Notifikasi
   const handleDeleteItem = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     setNotifications((prev) => prev.filter((n) => n.id !== id));
     await supabase.from("notifications").delete().eq("id", id);
   };
 
-  // 6. Handler Tandai Satu Notifikasi Saja Sebagai Dibaca
   const handleMarkSingleAsRead = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     setNotifications((prev) =>
@@ -334,16 +311,13 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
     await supabase.from("notifications").update({ is_read: true }).eq("id", id);
   };
 
-  // 7. Handler Salin Teks Notifikasi Ke Clipboard
   const handleCopyMessage = (e: React.MouseEvent, notif: Notification) => {
     e.stopPropagation();
-    const textToCopy = `${notif.title}: ${notif.message}`;
-    navigator.clipboard.writeText(textToCopy);
+    navigator.clipboard.writeText(`${notif.title}: ${notif.message}`);
     setCopiedId(notif.id);
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  // 8. Handler Klik Item Notifikasi
   const handleItemClick = async (notif: Notification) => {
     if (isBatchMode) {
       toggleSelectItem(notif.id);
@@ -354,10 +328,7 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
       setNotifications((prev) =>
         prev.map((n) => (n.id === notif.id ? { ...n, is_read: true } : n))
       );
-      await supabase
-        .from("notifications")
-        .update({ is_read: true })
-        .eq("id", notif.id);
+      await supabase.from("notifications").update({ is_read: true }).eq("id", notif.id);
     }
 
     setIsOpen(false);
@@ -366,34 +337,23 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
     }
   };
 
-  // 9. Handler Load More (Muat Lebih Banyak)
   const handleLoadMore = () => {
     const newLimit = pageLimit + 15;
     setPageLimit(newLimit);
     fetchNotifications(newLimit);
   };
 
-  // 10. FITUR BARU: Toggle Pin/Unpin Notifikasi
   const handleTogglePin = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    const target = notifications.find(n => n.id === id);
+    const target = notifications.find((n) => n.id === id);
     if (!target) return;
-    
     const newPinnedState = !target.is_pinned;
-    
-    // Update State Lokal
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, is_pinned: newPinnedState } : n))
     );
-
-    // Sync ke database Supabase
-    await supabase
-      .from("notifications")
-      .update({ is_pinned: newPinnedState })
-      .eq("id", id);
+    await supabase.from("notifications").update({ is_pinned: newPinnedState }).eq("id", id);
   };
 
-  // 11. FITUR BARU: Batch Selection Handler
   const toggleSelectItem = (id: string) => {
     setSelectedIds((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
@@ -426,7 +386,6 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
     setIsBatchMode(false);
   };
 
-  // 12. FITUR BARU: Ekspor Log Notifikasi ke File CSV
   const handleExportCSV = () => {
     if (notifications.length === 0) return;
     const headers = ["ID,Title,Message,Role,IsRead,CreatedAt\n"];
@@ -444,7 +403,6 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
     document.body.removeChild(link);
   };
 
-  // 13. Format Waktu Relatif Cerdas & Pengecekan Notifikasi Baru
   const formatTimeAgo = (dateString: string) => {
     const date = new Date(dateString);
     const now = new Date();
@@ -458,10 +416,9 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
 
   const isBrandNew = (dateString: string) => {
     const diffInSeconds = Math.floor((new Date().getTime() - new Date(dateString).getTime()) / 1000);
-    return diffInSeconds < 300; // Kurang dari 5 menit
+    return diffInSeconds < 300;
   };
 
-  // 14. Helper Ikon & Warna Dinamis Berdasarkan Tipe Notifikasi
   const getNotificationStyle = (title: string) => {
     const lower = title.toLowerCase();
     if (lower.includes("alert") || lower.includes("keamanan") || lower.includes("terkunci") || lower.includes("ditolak")) {
@@ -495,7 +452,6 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
   const unreadCount = notifications.filter((n) => !n.is_read).length;
   const readPercentage = notifications.length > 0 ? Math.round(((notifications.length - unreadCount) / notifications.length) * 100) : 100;
 
-  // Filter Kompleks (Search, Tabs, Role, Waktu, & Auto Sorting Pin)
   const filteredNotifications = notifications
     .filter((n) => {
       const matchSearch =
@@ -504,17 +460,14 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
 
       if (!matchSearch) return false;
 
-      // Filter Khusus Target Role
       if (roleFilter === "role_only" && n.role !== currentRole) return false;
       if (roleFilter === "system_all" && n.role !== "all") return false;
 
-      // Filter Rentang Waktu
       if (timeRangeFilter !== "all") {
         const createdDate = new Date(n.created_at);
         const now = new Date();
         if (timeRangeFilter === "today") {
-          const isToday = createdDate.toDateString() === now.toDateString();
-          if (!isToday) return false;
+          if (createdDate.toDateString() !== now.toDateString()) return false;
         } else if (timeRangeFilter === "week") {
           const diffDays = (now.getTime() - createdDate.getTime()) / (1000 * 3600 * 24);
           if (diffDays > 7) return false;
@@ -522,14 +475,8 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
       }
 
       if (filterTab === "unread") return !n.is_read;
-      if (filterTab === "alert") {
-        const style = getNotificationStyle(n.title);
-        return style.type === "alert";
-      }
-      if (filterTab === "info") {
-        const style = getNotificationStyle(n.title);
-        return style.type === "info";
-      }
+      if (filterTab === "alert") return getNotificationStyle(n.title).type === "alert";
+      if (filterTab === "info") return getNotificationStyle(n.title).type === "info";
       if (filterTab === "rejected") {
         const lower = n.title.toLowerCase();
         return lower.includes("ditolak") || lower.includes("gagal") || lower.includes("batal");
@@ -542,7 +489,6 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
   return (
     <>
       <div className="relative inline-block text-left" ref={dropdownRef}>
-        {/* Tombol Lonceng Interaktif Dengan Animasi Wiggle */}
         <button
           onClick={() => setIsOpen(!isOpen)}
           className="relative p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition cursor-pointer shadow-sm focus:outline-none flex items-center justify-center active:scale-95"
@@ -556,20 +502,15 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
           )}
         </button>
 
-        {/* Popover Dropdown Panel (Responsif Desktop & Mobile Sheet Drawer) */}
         {isOpen && (
           <>
-            {/* Virtual Backdrop Overlay Blur */}
             <div className="fixed inset-0 bg-slate-900/10 backdrop-blur-[1px] z-40 sm:hidden"></div>
 
             <div className={`fixed sm:absolute bottom-0 sm:bottom-auto right-0 sm:mt-2 w-full sm:w-96 bg-white border rounded-t-3xl sm:rounded-2xl shadow-2xl z-50 overflow-hidden animate-in slide-in-from-bottom-5 sm:zoom-in-95 duration-200 max-h-[85vh] sm:max-h-none flex flex-col ${
               filterTab === "alert" ? "border-rose-400 ring-2 ring-rose-400/20" : "border-slate-200"
             }`}>
-              
-              {/* Mobile Sheet Drag Handle Indicator */}
               <div className="sm:hidden w-12 h-1 bg-slate-300 rounded-full mx-auto my-2"></div>
 
-              {/* Header Popover & Status Indikator Realtime */}
               <div className="p-3.5 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
                 <div className="flex items-center space-x-2">
                   <Sparkles className="w-4 h-4 text-emerald-600" />
@@ -580,66 +521,52 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
                     className={`inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-md ${
                       !isOnline ? "bg-amber-100 text-amber-800" : isRealtimeConnected ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
                     }`}
-                    title={!isOnline ? "Tidak Ada Koneksi Internet Browser" : isRealtimeConnected ? "Tersambung ke Supabase Realtime" : "Koneksi Realtime Terputus"}
                   >
                     {!isOnline ? <WifiOff className="w-2.5 h-2.5 text-amber-600" /> : isRealtimeConnected ? <Wifi className="w-2.5 h-2.5 text-emerald-600" /> : <WifiOff className="w-2.5 h-2.5 text-rose-600" />}
                     {!isOnline ? "No Net" : isRealtimeConnected ? "Live" : "Offline"}
                   </span>
                   {dndMode && (
-                    <span className="text-[9px] bg-slate-800 text-white font-bold px-1 rounded flex items-center gap-0.5" title="Mode Jangan Ganggu Aktif">
+                    <span className="text-[9px] bg-slate-800 text-white font-bold px-1 rounded flex items-center gap-0.5">
                       <Moon className="w-2.5 h-2.5" /> DND
                     </span>
                   )}
-                  <span className="hidden sm:inline-block text-[9px] text-slate-400 font-mono bg-slate-200/60 px-1 rounded" title="Pintasan Keyboard">
-                    Alt+N
-                  </span>
                 </div>
 
                 <div className="flex items-center space-x-1">
-                  {/* Tombol Toggle Batch Selection */}
                   <button
                     onClick={() => { setIsBatchMode(!isBatchMode); setSelectedIds([]); }}
                     className={`p-1 transition rounded-lg hover:bg-slate-200/60 ${isBatchMode ? "text-emerald-600 bg-emerald-50" : "text-slate-400 hover:text-slate-600"}`}
-                    title="Pilih Beberapa Notifikasi"
                   >
                     <CheckSquare className="w-3.5 h-3.5" />
                   </button>
 
-                  {/* Tombol Refresh Manual */}
                   <button
                     onClick={() => fetchNotifications()}
                     className="p-1 text-slate-400 hover:text-slate-600 transition rounded-lg hover:bg-slate-200/60"
-                    title="Segarkan Data"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin text-emerald-600" : ""}`} />
                   </button>
 
-                  {/* Tombol Toggle Settings Panel */}
                   <button
                     onClick={() => setShowSettingsPanel(!showSettingsPanel)}
                     className={`p-1 transition rounded-lg hover:bg-slate-200/60 ${showSettingsPanel ? "text-emerald-600 bg-emerald-50" : "text-slate-400 hover:text-slate-600"}`}
-                    title="Pengaturan Suara & Audio"
                   >
                     <Settings className="w-3.5 h-3.5" />
                   </button>
 
-                  {/* Tombol Tandai Semua Dibaca */}
                   {unreadCount > 0 && !isBatchMode && (
                     <button
                       onClick={handleMarkAllAsRead}
                       className="p-1 text-slate-500 hover:text-emerald-700 transition rounded-lg hover:bg-emerald-50 flex items-center gap-1 text-[11px] font-bold"
-                      title="Tandai Semua Dibaca"
                     >
                       <CheckCheck className="w-3.5 h-3.5 text-emerald-600" />
                     </button>
                   )}
 
-                  {/* Tombol Clear All Modal */}
                   {notifications.length > 0 && !isBatchMode && (
                     <button
                       onClick={() => setShowClearConfirmModal(true)}
                       className="p-1 text-slate-400 hover:text-rose-600 transition rounded-lg hover:bg-rose-50"
-                      title="Hapus Semua Notifikasi"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -647,16 +574,13 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
                 </div>
               </div>
 
-              {/* Progress Bar Keterbacaan */}
               <div className="w-full bg-slate-100 h-1">
                 <div 
                   className="bg-emerald-500 h-1 transition-all duration-300"
                   style={{ width: `${readPercentage}%` }}
-                  title={`${readPercentage}% Notifikasi Sudah Dibaca`}
                 ></div>
               </div>
 
-              {/* Sub-Panel Internal Pengaturan Audio (Dengan Slider Volume, Export CSV & Mode DND) */}
               {showSettingsPanel && (
                 <div className="p-3 bg-slate-100/80 border-b border-slate-200 text-xs space-y-2.5 animate-in fade-in duration-150">
                   <div className="flex items-center justify-between">
@@ -667,7 +591,6 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
                       <button
                         onClick={playChimeSound}
                         className="px-1.5 py-0.5 bg-slate-200 hover:bg-slate-300 rounded text-[10px] text-slate-700 flex items-center gap-1 cursor-pointer"
-                        title="Tes Suara Chime"
                       >
                         <Play className="w-2.5 h-2.5" /> Tes
                       </button>
@@ -690,7 +613,6 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
                       <button
                         onClick={() => speakNotificationTitle("Notifikasi sistem terhubung")}
                         className="px-1.5 py-0.5 bg-slate-200 hover:bg-slate-300 rounded text-[10px] text-slate-700 flex items-center gap-1 cursor-pointer"
-                        title="Tes Suara Pembaca"
                       >
                         <Play className="w-2.5 h-2.5" /> Tes
                       </button>
@@ -705,10 +627,9 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
                     </div>
                   </div>
 
-                  {/* Mode Jangan Ganggu (DND) Toggle */}
                   <div className="flex items-center justify-between pt-1 border-t border-slate-200/60">
                     <span className="font-semibold text-slate-700 flex items-center gap-1.5">
-                      <Moon className="w-3.5 h-3.5 text-slate-500" /> Mode DND (Jangan Ganggu)
+                      <Moon className="w-3.5 h-3.5 text-slate-500" /> Mode DND
                     </span>
                     <button
                       onClick={() => setDndMode(!dndMode)}
@@ -720,7 +641,6 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
                     </button>
                   </div>
 
-                  {/* Volume Slider Gauge */}
                   <div className="pt-1 border-t border-slate-200/60 flex items-center justify-between gap-2">
                     <span className="text-[10px] font-semibold text-slate-500 flex items-center gap-1">
                       <Sliders className="w-3 h-3" /> Volume Audio
@@ -736,7 +656,6 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
                     />
                   </div>
 
-                  {/* Tombol Ekspor CSV Logs */}
                   <div className="pt-1.5 border-t border-slate-200/60">
                     <button
                       onClick={handleExportCSV}
@@ -749,7 +668,6 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
                 </div>
               )}
 
-              {/* Toolbar Aksi Batch Selection (Pilih Banyak) */}
               {isBatchMode && (
                 <div className="p-2 bg-emerald-50 border-b border-emerald-100 flex items-center justify-between text-xs animate-in fade-in">
                   <div className="flex items-center gap-2">
@@ -784,7 +702,6 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
                 </div>
               )}
 
-              {/* Input Pencarian & Filter Waktu/Role */}
               <div className="p-2 border-b border-slate-100 bg-white flex items-center gap-2">
                 <div className="relative flex-1">
                   <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
@@ -792,7 +709,7 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Cari notifikasi (mis. IGD, Billing)..."
+                    placeholder="Cari notifikasi..."
                     className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
                   />
                   {searchQuery && (
@@ -805,7 +722,6 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
                   )}
                 </div>
 
-                {/* Selector Rentang Waktu */}
                 <select
                   value={timeRangeFilter}
                   onChange={(e) => setTimeRangeFilter(e.target.value as "all" | "today" | "week")}
@@ -817,7 +733,6 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
                 </select>
               </div>
 
-              {/* Filter Target Role Sub-Bar */}
               <div className="flex border-b border-slate-100 bg-slate-50/70 px-3 py-1 gap-2 text-[10px] font-medium text-slate-500">
                 <button
                   onClick={() => setRoleFilter("all_roles")}
@@ -841,14 +756,11 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
                 </button>
               </div>
 
-              {/* Tab Filter Kategori */}
               <div className="flex border-b border-slate-100 bg-slate-50/50 px-3 py-1.5 gap-1.5 text-[11px] overflow-x-auto no-scrollbar">
                 <button
                   onClick={() => setFilterTab("all")}
                   className={`px-2.5 py-1 rounded-xl font-bold transition whitespace-nowrap cursor-pointer ${
-                    filterTab === "all"
-                      ? "bg-slate-900 text-white shadow-sm"
-                      : "text-slate-500 hover:bg-slate-200/60"
+                    filterTab === "all" ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-slate-200/60"
                   }`}
                 >
                   Semua ({notifications.length})
@@ -856,9 +768,7 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
                 <button
                   onClick={() => setFilterTab("unread")}
                   className={`px-2.5 py-1 rounded-xl font-bold transition whitespace-nowrap cursor-pointer ${
-                    filterTab === "unread"
-                      ? "bg-slate-900 text-white shadow-sm"
-                      : "text-slate-500 hover:bg-slate-200/60"
+                    filterTab === "unread" ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-slate-200/60"
                   }`}
                 >
                   Belum Dibaca ({unreadCount})
@@ -866,9 +776,7 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
                 <button
                   onClick={() => setFilterTab("alert")}
                   className={`px-2.5 py-1 rounded-xl font-bold transition whitespace-nowrap cursor-pointer ${
-                    filterTab === "alert"
-                      ? "bg-rose-600 text-white shadow-sm"
-                      : "text-slate-500 hover:bg-slate-200/60"
+                    filterTab === "alert" ? "bg-rose-600 text-white shadow-sm" : "text-slate-500 hover:bg-slate-200/60"
                   }`}
                 >
                   Kritis/Alert
@@ -876,9 +784,7 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
                 <button
                   onClick={() => setFilterTab("info")}
                   className={`px-2.5 py-1 rounded-xl font-bold transition whitespace-nowrap cursor-pointer ${
-                    filterTab === "info"
-                      ? "bg-sky-600 text-white shadow-sm"
-                      : "text-slate-500 hover:bg-slate-200/60"
+                    filterTab === "info" ? "bg-sky-600 text-white shadow-sm" : "text-slate-500 hover:bg-slate-200/60"
                   }`}
                 >
                   Informasi
@@ -886,16 +792,13 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
                 <button
                   onClick={() => setFilterTab("rejected")}
                   className={`px-2.5 py-1 rounded-xl font-bold transition whitespace-nowrap cursor-pointer ${
-                    filterTab === "rejected"
-                      ? "bg-amber-600 text-white shadow-sm"
-                      : "text-slate-500 hover:bg-slate-200/60"
+                    filterTab === "rejected" ? "bg-amber-600 text-white shadow-sm" : "text-slate-500 hover:bg-slate-200/60"
                   }`}
                 >
                   Ditolak
                 </button>
               </div>
 
-              {/* Daftar Notifikasi & Skeleton Loader */}
               <div className="max-h-80 sm:max-h-80 overflow-y-auto divide-y divide-slate-100 flex-1">
                 {isLoading && notifications.length === 0 ? (
                   <div className="p-4 space-y-3">
@@ -938,7 +841,6 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
                             : "bg-white hover:bg-slate-50"
                         }`}
                       >
-                        {/* Checkbox pada Mode Batch Selection */}
                         {isBatchMode && (
                           <div className="pt-0.5">
                             {isSelected ? (
@@ -988,13 +890,11 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
                           </div>
                         </div>
 
-                        {/* Tombol Aksi Item Cepat (Pin / Copy / Tandai Dibaca / Hapus) */}
                         {!isBatchMode && (
                           <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition">
                             <button
                               onClick={(e) => handleTogglePin(e, n.id)}
                               className={`p-1 transition rounded-lg hover:bg-slate-200/60 ${n.is_pinned ? "text-amber-600" : "text-slate-400 hover:text-slate-600"}`}
-                              title={n.is_pinned ? "Lepas sematan" : "Sematkan ke atas"}
                             >
                               {n.is_pinned ? <PinOff className="w-3.5 h-3.5" /> : <Pin className="w-3.5 h-3.5" />}
                             </button>
@@ -1002,7 +902,6 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
                             <button
                               onClick={(e) => handleCopyMessage(e, n)}
                               className="p-1 text-slate-400 hover:text-slate-600 transition rounded-lg hover:bg-slate-200/60"
-                              title="Salin isi pesan"
                             >
                               {copiedId === n.id ? <CheckIcon className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
                             </button>
@@ -1011,7 +910,6 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
                               <button
                                 onClick={(e) => handleMarkSingleAsRead(e, n.id)}
                                 className="p-1 text-slate-400 hover:text-emerald-600 transition rounded-lg hover:bg-emerald-50"
-                                title="Tandai sudah dibaca"
                               >
                                 <Check className="w-3.5 h-3.5" />
                               </button>
@@ -1020,7 +918,6 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
                             <button
                               onClick={(e) => handleDeleteItem(e, n.id)}
                               className="p-1 text-slate-400 hover:text-rose-600 transition rounded-lg hover:bg-rose-50"
-                              title="Hapus notifikasi ini"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -1031,7 +928,6 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
                   })
                 )}
 
-                {/* Tombol Load More */}
                 {hasMore && !searchQuery && filterTab === "all" && (
                   <div className="p-2 text-center bg-slate-50">
                     <button
@@ -1046,7 +942,6 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
                 )}
               </div>
 
-              {/* Timestamp Refreshed & Footer Panel */}
               <div className="p-2.5 bg-slate-50 border-t border-slate-100 space-y-1.5 text-center">
                 <div className="flex items-center justify-between text-[10px] text-slate-400 px-1 font-mono">
                   <span className="flex items-center gap-1">
@@ -1071,7 +966,6 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
         )}
       </div>
 
-      {/* BANNER TOAST PREVIEW REALTIME DENGAN PROGRESS TIMER BAR */}
       {latestToast && !isOpen && !dndMode && (
         <div 
           onClick={() => handleItemClick(latestToast)}
@@ -1088,13 +982,10 @@ export default function NotificationBell({ currentRole }: NotificationBellProps)
           >
             <X className="w-4 h-4" />
           </button>
-          
-          {/* Progress Timer Bar Melayang */}
           <div className="absolute bottom-0 left-0 h-1 bg-emerald-500 animate-pulse w-full"></div>
         </div>
       )}
 
-      {/* MODAL KONFIRMASI CLEAR ALL KUSTOM */}
       {showClearConfirmModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
           <div className="bg-white border border-slate-200 rounded-3xl p-6 max-w-sm w-full shadow-2xl text-center space-y-4 font-sans">

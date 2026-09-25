@@ -28,7 +28,8 @@ import {
   Clock4,
   Target,
   Plus,
-  Compass
+  Compass,
+  Loader2
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import AdminHeader from '@/components/admin/AdminHeader';
@@ -86,6 +87,7 @@ export default function AdminAbsensiPage() {
   const [records, setRecords] = useState<AbsensiRecord[]>([]);
   const [settings, setSettings] = useState<AbsensiSetting[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isLoadingInspection, setIsLoadingInspection] = useState<boolean>(false);
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('semua');
   const [filterDate, setFilterDate] = useState<string>('');
@@ -100,7 +102,7 @@ export default function AdminAbsensiPage() {
 
   // Session Activity Logs State
   const [activityLogs, setActivityLogs] = useState<string[]>([]);
-   
+    
   // Bulk Actions State
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
 
@@ -140,13 +142,15 @@ export default function AdminAbsensiPage() {
     setTimeout(() => setToast(null), 4000);
   };
 
+  // ✅ OPTIMASI 1: Ambil hanya kolom ringan (TIDAK menyertakan foto_selfie) untuk menghemat Egress secara dramatis!
   const fetchRecords = useCallback(async () => {
     setIsLoading(true);
     try {
       const { data, error } = await supabase
         .from('absensi_records')
-        .select('*')
-        .order('created_at', { ascending: false });
+        .select('id, uuid, user_id, email_user, nama_pegawai, jabatan, unit_kerja, shift, status_kehadiran, keterangan, status_verifikasi, catatan_penolakan, latitude, longitude, jarak_meter, status_radius, is_locked, created_at')
+        .order('created_at', { ascending: false })
+        .limit(100);
 
       if (!error && data) {
         setRecords(data as AbsensiRecord[]);
@@ -174,13 +178,14 @@ export default function AdminAbsensiPage() {
     }
   }, []);
 
+  // ✅ OPTIMASI 2: Menggunakan maybeSingle() untuk mencegah log error HTTP 404
   const fetchOfficeLocation = useCallback(async () => {
     try {
       const { data, error } = await supabase
         .from('absensi_office_location')
         .select('*')
         .eq('id', 1)
-        .single();
+        .maybeSingle();
 
       if (!error && data) {
         setOfficeLocation(data as OfficeLocation);
@@ -190,6 +195,30 @@ export default function AdminAbsensiPage() {
     }
   }, []);
 
+  // ✅ OPTIMASI 3: Fetch Foto Selfie secara On-Demand saat tombol inspeksi diklik
+  const handleOpenInspectModal = async (record: AbsensiRecord) => {
+    setInspectRecord(record);
+    if (!record.foto_selfie) {
+      setIsLoadingInspection(true);
+      try {
+        const { data, error } = await supabase
+          .from('absensi_records')
+          .select('foto_selfie')
+          .eq('id', record.id)
+          .maybeSingle();
+
+        if (!error && data?.foto_selfie) {
+          setInspectRecord(prev => prev ? { ...prev, foto_selfie: data.foto_selfie } : null);
+          setRecords(prev => prev.map(r => r.id === record.id ? { ...r, foto_selfie: data.foto_selfie } : r));
+        }
+      } catch (err) {
+        console.error('Gagal memuat foto selfie:', err);
+      } finally {
+        setIsLoadingInspection(false);
+      }
+    }
+  };
+
   useEffect(() => {
     fetchRecords();
     fetchSettings();
@@ -198,15 +227,51 @@ export default function AdminAbsensiPage() {
     
     const channel = supabase
       .channel('admin_realtime_absensi')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'absensi_records' }, () => {
-        fetchRecords();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'absensi_settings' }, () => {
-        fetchSettings();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'absensi_office_location' }, () => {
-        fetchOfficeLocation();
-      })
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'absensi_records' },
+        (payload) => {
+          if (payload.eventType === 'INSERT') {
+            const newRecord = payload.new as AbsensiRecord;
+            delete newRecord.foto_selfie; // Strip foto agar state hemat memori
+            setRecords(prev => [newRecord, ...prev]);
+            addLog(`[Realtime] Absensi baru terdeteksi: ${newRecord.nama_pegawai}`);
+          } else if (payload.eventType === 'UPDATE') {
+            const updatedRecord = payload.new as AbsensiRecord;
+            delete updatedRecord.foto_selfie;
+            setRecords(prev => prev.map(r => r.id === updatedRecord.id ? { ...r, ...updatedRecord } : r));
+          } else if (payload.eventType === 'DELETE') {
+            const deletedId = payload.old.id;
+            setRecords(prev => prev.filter(r => r.id !== deletedId));
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'absensi_settings' },
+        (payload) => {
+          if (payload.eventType === 'INSERT') {
+            const newSetting = payload.new as AbsensiSetting;
+            setSettings(prev => [...prev, newSetting]);
+          } else if (payload.eventType === 'UPDATE') {
+            const updatedSetting = payload.new as AbsensiSetting;
+            setSettings(prev => prev.map(s => s.id === updatedSetting.id ? { ...s, ...updatedSetting } : s));
+          } else if (payload.eventType === 'DELETE') {
+            const deletedId = payload.old.id;
+            setSettings(prev => prev.filter(s => s.id !== deletedId));
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'absensi_office_location' },
+        (payload) => {
+          if (payload.eventType === 'UPDATE' || payload.eventType === 'INSERT') {
+            const newLoc = payload.new as OfficeLocation;
+            setOfficeLocation(newLoc);
+          }
+        }
+      )
       .subscribe();
 
     return () => {
@@ -281,36 +346,54 @@ export default function AdminAbsensiPage() {
   }, [activeTab, officeLocation.latitude, officeLocation.longitude]);
 
   const handleApprove = async (id: number) => {
-    await supabase.from('absensi_records').update({ status_verifikasi: 'Disetujui' }).eq('id', id);
-    showToast('Absensi pegawai berhasil disetujui.', 'success');
-    addLog(`Menyetujui absensi ID: ${id}`);
-    fetchRecords();
+    try {
+      const { error } = await supabase.from('absensi_records').update({ status_verifikasi: 'Disetujui' }).eq('id', id);
+      if (error) throw error;
+      
+      setRecords(prev => prev.map(r => r.id === id ? { ...r, status_verifikasi: 'Disetujui' } : r));
+      showToast('Absensi pegawai berhasil disetujui.', 'success');
+      addLog(`Menyetujui absensi ID: ${id}`);
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'Gagal memproses persetujuan';
+      showToast(`Gagal menyetujui: ${errMsg}`, 'error');
+    }
   };
 
   const handleSaveRejection = async () => {
     if (rejectModalId === null) return;
     try {
-      await supabase.from('absensi_records').update({ 
+      const reasonText = rejectionReason || 'Absensi perlu dikonfirmasi ulang.';
+      const { error } = await supabase.from('absensi_records').update({ 
         status_verifikasi: 'Ditolak',
-        catatan_penolakan: rejectionReason || 'Absensi perlu dikonfirmasi ulang.'
+        catatan_penolakan: reasonText
       }).eq('id', rejectModalId);
 
+      if (error) throw error;
+
+      setRecords(prev => prev.map(r => r.id === rejectModalId ? { ...r, status_verifikasi: 'Ditolak', catatan_penolakan: reasonText } : r));
       showToast('Absensi ditolak dengan catatan.', 'error');
       addLog(`Menolak absensi ID: ${rejectModalId}`);
       setRejectModalId(null);
       setRejectionReason('');
-      fetchRecords();
-    } catch (err: any) {
-      showToast(`Gagal menolak: ${err?.message || JSON.stringify(err)}`, 'error');
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : JSON.stringify(err);
+      showToast(`Gagal menolak: ${errMsg}`, 'error');
     }
   };
 
   const handleDelete = async (id: number) => {
     if (confirm('PERINGATAN: Hapus permanen data absensi ini?')) {
-      await supabase.from('absensi_records').delete().eq('id', id);
-      showToast('Data absensi berhasil dihapus permanen.', 'error');
-      addLog(`Menghapus permanen absensi ID: ${id}`);
-      fetchRecords();
+      try {
+        const { error } = await supabase.from('absensi_records').delete().eq('id', id);
+        if (error) throw error;
+
+        setRecords(prev => prev.filter(r => r.id !== id));
+        showToast('Data absensi berhasil dihapus permanen.', 'error');
+        addLog(`Menghapus permanen absensi ID: ${id}`);
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : JSON.stringify(err);
+        showToast(`Gagal menghapus: ${errMsg}`, 'error');
+      }
     }
   };
 
@@ -333,33 +416,43 @@ export default function AdminAbsensiPage() {
   const handleBulkApprove = async () => {
     if (selectedIds.length === 0) return;
     if (confirm(`Setujui ${selectedIds.length} data absensi yang dipilih?`)) {
-      for (const id of selectedIds) {
-        await supabase.from('absensi_records').update({ status_verifikasi: 'Disetujui' }).eq('id', id);
+      try {
+        const { error } = await supabase.from('absensi_records').update({ status_verifikasi: 'Disetujui' }).in('id', selectedIds);
+        if (error) throw error;
+
+        setRecords(prev => prev.map(r => selectedIds.includes(r.id) ? { ...r, status_verifikasi: 'Disetujui' } : r));
+        showToast(`Berhasil menyetujui ${selectedIds.length} data absensi.`, 'success');
+        addLog(`Bulk approve ${selectedIds.length} data absensi.`);
+        setSelectedIds([]);
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : JSON.stringify(err);
+        showToast(`Gagal menyetujui massal: ${errMsg}`, 'error');
       }
-      showToast(`Berhasil menyetujui ${selectedIds.length} data absensi.`, 'success');
-      addLog(`Bulk approve ${selectedIds.length} data absensi.`);
-      setSelectedIds([]);
-      fetchRecords();
     }
   };
 
   const handleBulkDelete = async () => {
     if (selectedIds.length === 0) return;
     if (confirm(`PERINGATAN: Hapus permanen ${selectedIds.length} data absensi yang dipilih?`)) {
-      for (const id of selectedIds) {
-        await supabase.from('absensi_records').delete().eq('id', id);
+      try {
+        const { error } = await supabase.from('absensi_records').delete().in('id', selectedIds);
+        if (error) throw error;
+
+        setRecords(prev => prev.filter(r => !selectedIds.includes(r.id)));
+        showToast(`Berhasil menghapus ${selectedIds.length} data absensi.`, 'error');
+        addLog(`Bulk delete ${selectedIds.length} data absensi.`);
+        setSelectedIds([]);
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : JSON.stringify(err);
+        showToast(`Gagal menghapus massal: ${errMsg}`, 'error');
       }
-      showToast(`Berhasil menghapus ${selectedIds.length} data absensi.`, 'error');
-      addLog(`Bulk delete ${selectedIds.length} data absensi.`);
-      setSelectedIds([]);
-      fetchRecords();
     }
   };
 
   const handleSaveEdit = async () => {
     if (!editingRecord) return;
     try {
-      await supabase.from('absensi_records').update({
+      const { error } = await supabase.from('absensi_records').update({
         nama_pegawai: editingRecord.nama_pegawai,
         jabatan: editingRecord.jabatan,
         shift: editingRecord.shift,
@@ -367,12 +460,15 @@ export default function AdminAbsensiPage() {
         keterangan: editingRecord.keterangan
       }).eq('id', editingRecord.id);
 
+      if (error) throw error;
+
+      setRecords(prev => prev.map(r => r.id === editingRecord.id ? editingRecord : r));
       showToast('Data absensi berhasil diperbarui!', 'success');
       addLog(`Memperbarui data absensi pegawai: ${editingRecord.nama_pegawai}`);
       setEditingRecord(null);
-      fetchRecords();
-    } catch (err: any) {
-      showToast(`Gagal memperbarui: ${err?.message || JSON.stringify(err)}`, 'error');
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : JSON.stringify(err);
+      showToast(`Gagal memperbarui: ${errMsg}`, 'error');
     }
   };
 
@@ -426,10 +522,17 @@ export default function AdminAbsensiPage() {
 
   const handleDeleteSetting = async (id: number) => {
     if (confirm('Hapus konfigurasi shift ini?')) {
-      await supabase.from('absensi_settings').delete().eq('id', id);
-      showToast('Konfigurasi shift berhasil dihapus.', 'error');
-      addLog(`Menghapus shift ID: ${id}`);
-      fetchSettings();
+      try {
+        const { error } = await supabase.from('absensi_settings').delete().eq('id', id);
+        if (error) throw error;
+
+        setSettings(prev => prev.filter(s => s.id !== id));
+        showToast('Konfigurasi shift berhasil dihapus.', 'error');
+        addLog(`Menghapus shift ID: ${id}`);
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : JSON.stringify(err);
+        showToast(`Gagal menghapus shift: ${errMsg}`, 'error');
+      }
     }
   };
 
@@ -452,10 +555,10 @@ export default function AdminAbsensiPage() {
 
       showToast('Titik koordinat dan radius geofencing berhasil disimpan ke database!', 'success');
       addLog(`Memperbarui titik GPS RSUD: Lat ${officeLocation.latitude}, Lng ${officeLocation.longitude}`);
-      fetchOfficeLocation();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Gagal simpan lokasi kantor:', err);
-      showToast(`Gagal menyimpan lokasi: ${err?.message || JSON.stringify(err)}`, 'error');
+      const errMsg = err instanceof Error ? err.message : JSON.stringify(err);
+      showToast(`Gagal menyimpan lokasi: ${errMsg}`, 'error');
     } finally {
       setIsSavingLocation(false);
     }
@@ -682,7 +785,7 @@ export default function AdminAbsensiPage() {
                   <select
                     value={shiftFilter}
                     onChange={(e) => { setShiftFilter(e.target.value); setCurrentPage(1); }}
-                    className="bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2 text-xs text-slate-700 font-bold focus:outline-none"
+                    className="bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2 text-xs text-slate-700 font-bold focus:outline-none cursor-pointer"
                   >
                     <option value="semua">Semua Shift</option>
                     <option value="Pagi">Shift Pagi</option>
@@ -693,7 +796,7 @@ export default function AdminAbsensiPage() {
                   <select
                     value={radiusFilter}
                     onChange={(e) => { setRadiusFilter(e.target.value); setCurrentPage(1); }}
-                    className="bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2 text-xs text-slate-700 font-bold focus:outline-none"
+                    className="bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2 text-xs text-slate-700 font-bold focus:outline-none cursor-pointer"
                   >
                     <option value="semua">Semua Radius GPS</option>
                     <option value="valid">Dalam Radius (≤ {officeLocation.radius_meter}m)</option>
@@ -706,9 +809,9 @@ export default function AdminAbsensiPage() {
                       type="date"
                       value={filterDate}
                       onChange={(e) => { setFilterDate(e.target.value); setCurrentPage(1); }}
-                      className="bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2 text-xs text-slate-700 font-bold focus:outline-none"
+                      className="bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2 text-xs text-slate-700 font-bold focus:outline-none cursor-pointer"
                     />
-                    {filterDate && <button onClick={() => setFilterDate('')} className="text-xs text-rose-600 font-bold hover:underline">Reset</button>}
+                    {filterDate && <button onClick={() => setFilterDate('')} className="text-xs text-rose-600 font-bold hover:underline cursor-pointer">Reset</button>}
                   </div>
                 </div>
 
@@ -733,7 +836,7 @@ export default function AdminAbsensiPage() {
                     <button onClick={handleBulkDelete} className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl cursor-pointer transition flex items-center gap-1">
                       <Trash2 className="w-3.5 h-3.5" /> Hapus Terpilih
                     </button>
-                    <button onClick={() => setSelectedIds([])} className="text-slate-300 hover:text-white px-2 py-1 font-bold">Batal</button>
+                    <button onClick={() => setSelectedIds([])} className="text-slate-300 hover:text-white px-2 py-1 font-bold cursor-pointer">Batal</button>
                   </div>
                 </div>
               )}
@@ -813,7 +916,7 @@ export default function AdminAbsensiPage() {
                           </td>
                           <td className="p-3.5 text-center print:hidden">
                             <div className="flex items-center justify-center gap-1">
-                              <button onClick={() => setInspectRecord(r)} className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl cursor-pointer" title="Inspeksi Selfie & GPS"><Eye className="w-3.5 h-3.5" /></button>
+                              <button onClick={() => handleOpenInspectModal(r)} className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl cursor-pointer" title="Inspeksi Selfie & GPS"><Eye className="w-3.5 h-3.5" /></button>
                               <button onClick={() => handleApprove(r.id)} className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl cursor-pointer" title="Setujui"><CheckCircle2 className="w-3.5 h-3.5" /></button>
                               <button onClick={() => setRejectModalId(r.id)} className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl cursor-pointer" title="Tolak"><XCircle className="w-3.5 h-3.5" /></button>
                               <button onClick={() => setEditingRecord(r)} className="p-1.5 bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-xl cursor-pointer" title="Edit"><Edit3 className="w-3.5 h-3.5" /></button>
@@ -1083,7 +1186,7 @@ export default function AdminAbsensiPage() {
                 </div>
                 <div>
                   <label className="font-bold text-slate-700 block mb-1.5 uppercase text-[10px] tracking-wider">Status Keaktifan</label>
-                  <select value={editingSetting.is_active ? 'true' : 'false'} onChange={(e) => setEditingSetting({ ...editingSetting, is_active: e.target.value === 'true' })} className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-3 font-bold text-slate-900 focus:outline-none focus:border-purple-500">
+                  <select value={editingSetting.is_active ? 'true' : 'false'} onChange={(e) => setEditingSetting({ ...editingSetting, is_active: e.target.value === 'true' })} className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-3 font-bold text-slate-900 focus:outline-none focus:border-purple-500 cursor-pointer">
                     <option value="true">Aktif</option>
                     <option value="false">Nonaktif</option>
                   </select>
@@ -1129,33 +1232,33 @@ export default function AdminAbsensiPage() {
               <div className="grid grid-cols-2 gap-4 pt-2 border-t border-slate-100">
                 <div>
                   <label className="font-bold text-slate-700 block mb-1.5 uppercase text-[10px] tracking-wider">Jam Masuk</label>
-                  <input type="time" value={editingSetting.jam_masuk} onChange={(e) => setEditingSetting({ ...editingSetting, jam_masuk: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-3 font-mono font-bold text-purple-700 focus:outline-none" />
+                  <input type="time" value={editingSetting.jam_masuk} onChange={(e) => setEditingSetting({ ...editingSetting, jam_masuk: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-3 font-mono font-bold text-purple-700 focus:outline-none cursor-pointer" />
                 </div>
                 <div>
                   <label className="font-bold text-slate-700 block mb-1.5 uppercase text-[10px] tracking-wider">Jam Pulang</label>
-                  <input type="time" value={editingSetting.jam_pulang} onChange={(e) => setEditingSetting({ ...editingSetting, jam_pulang: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-3 font-mono font-bold text-purple-700 focus:outline-none" />
+                  <input type="time" value={editingSetting.jam_pulang} onChange={(e) => setEditingSetting({ ...editingSetting, jam_pulang: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-3 font-mono font-bold text-purple-700 focus:outline-none cursor-pointer" />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="font-bold text-slate-700 block mb-1.5 uppercase text-[10px] tracking-wider">Batas Awal Masuk</label>
-                  <input type="time" value={editingSetting.batas_awal_masuk} onChange={(e) => setEditingSetting({ ...editingSetting, batas_awal_masuk: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-3 font-mono text-slate-700 focus:outline-none" />
+                  <input type="time" value={editingSetting.batas_awal_masuk} onChange={(e) => setEditingSetting({ ...editingSetting, batas_awal_masuk: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-3 font-mono text-slate-700 focus:outline-none cursor-pointer" />
                 </div>
                 <div>
                   <label className="font-bold text-slate-700 block mb-1.5 uppercase text-[10px] tracking-wider">Batas Akhir Masuk</label>
-                  <input type="time" value={editingSetting.batas_akhir_masuk} onChange={(e) => setEditingSetting({ ...editingSetting, batas_akhir_masuk: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-3 font-mono text-slate-700 focus:outline-none" />
+                  <input type="time" value={editingSetting.batas_akhir_masuk} onChange={(e) => setEditingSetting({ ...editingSetting, batas_akhir_masuk: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-3 font-mono text-slate-700 focus:outline-none cursor-pointer" />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="font-bold text-slate-700 block mb-1.5 uppercase text-[10px] tracking-wider">Batas Awal Pulang</label>
-                  <input type="time" value={editingSetting.batas_awal_pulang} onChange={(e) => setEditingSetting({ ...editingSetting, batas_awal_pulang: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-3 font-mono text-slate-700 focus:outline-none" />
+                  <input type="time" value={editingSetting.batas_awal_pulang} onChange={(e) => setEditingSetting({ ...editingSetting, batas_awal_pulang: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-3 font-mono text-slate-700 focus:outline-none cursor-pointer" />
                 </div>
                 <div>
                   <label className="font-bold text-slate-700 block mb-1.5 uppercase text-[10px] tracking-wider">Batas Akhir Pulang</label>
-                  <input type="time" value={editingSetting.batas_akhir_pulang} onChange={(e) => setEditingSetting({ ...editingSetting, batas_akhir_pulang: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-3 font-mono text-slate-700 focus:outline-none" />
+                  <input type="time" value={editingSetting.batas_akhir_pulang} onChange={(e) => setEditingSetting({ ...editingSetting, batas_akhir_pulang: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-3 font-mono text-slate-700 focus:outline-none cursor-pointer" />
                 </div>
               </div>
             </div>
@@ -1181,7 +1284,12 @@ export default function AdminAbsensiPage() {
               <button onClick={() => setInspectRecord(null)} className="p-1 hover:bg-slate-100 rounded-full cursor-pointer"><X className="w-5 h-5 text-slate-500" /></button>
             </div>
 
-            {inspectRecord.foto_selfie ? (
+            {isLoadingInspection ? (
+              <div className="w-full h-56 bg-slate-100 rounded-2xl flex flex-col items-center justify-center text-slate-400 gap-2">
+                <Loader2 className="w-6 h-6 animate-spin text-purple-600" />
+                <span>Memuat gambar selfie...</span>
+              </div>
+            ) : inspectRecord.foto_selfie ? (
               <div className="w-full h-56 rounded-2xl overflow-hidden border border-slate-200 shadow-inner">
                 <img src={inspectRecord.foto_selfie} alt="Live Selfie" className="w-full h-full object-cover" />
               </div>
@@ -1257,7 +1365,7 @@ export default function AdminAbsensiPage() {
                 </div>
                 <div>
                   <label className="font-bold text-slate-700 block mb-1">Shift</label>
-                  <select value={editingRecord.shift} onChange={(e) => setEditingRecord({ ...editingRecord, shift: e.target.value })} className="w-full bg-slate-50 border rounded-xl p-2 font-bold">
+                  <select value={editingRecord.shift} onChange={(e) => setEditingRecord({ ...editingRecord, shift: e.target.value })} className="w-full bg-slate-50 border rounded-xl p-2 font-bold cursor-pointer">
                     <option value="Pagi">Shift Pagi</option>
                     <option value="Siang">Shift Siang</option>
                     <option value="Malam">Shift Malam</option>
@@ -1267,7 +1375,7 @@ export default function AdminAbsensiPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="font-bold text-slate-700 block mb-1">Status Kehadiran</label>
-                  <select value={editingRecord.status_kehadiran} onChange={(e) => setEditingRecord({ ...editingRecord, status_kehadiran: e.target.value })} className="w-full bg-slate-50 border rounded-xl p-2 font-bold">
+                  <select value={editingRecord.status_kehadiran} onChange={(e) => setEditingRecord({ ...editingRecord, status_kehadiran: e.target.value })} className="w-full bg-slate-50 border rounded-xl p-2 font-bold cursor-pointer">
                     <option value="Hadir">Hadir</option>
                     <option value="Izin">Izin</option>
                     <option value="Sakit">Sakit</option>

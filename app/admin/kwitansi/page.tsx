@@ -97,14 +97,15 @@ export default function AdminKwitansiPage() {
       const { data, error } = await supabase
         .from('kwitansi_header')
         .select('*')
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .limit(300); // Pembatasan kuota log ingestion
 
       if (!error && data) {
         setRecords(data as KwitansiRecord[]);
       }
     } catch (err) {
       console.error('Gagal memuat rekap master kwitansi:', err);
-    } finally {
+    } fontinally: {
       setIsLoading(false);
     }
   }, []);
@@ -112,6 +113,7 @@ export default function AdminKwitansiPage() {
   useEffect(() => {
     fetchRecords();
     addLog('Panel Super Admin Master Kwitansi terhubung.');
+    
     const channel = supabase
       .channel('admin_realtime_kwitansi')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'kwitansi_header' }, () => {
@@ -144,76 +146,105 @@ export default function AdminKwitansiPage() {
   };
 
   const handleApprove = async (id: number) => {
-    await supabase.from('kwitansi_header').update({ status_verifikasi: 'Disetujui' }).eq('id', id);
-    showToast('Kwitansi berhasil diverifikasi & disetujui.', 'success');
-    addLog(`Menyetujui kwitansi ID: ${id}`);
-    fetchRecords();
+    try {
+      const { error } = await supabase.from('kwitansi_header').update({ status_verifikasi: 'Disetujui' }).eq('id', id);
+      if (error) throw error;
+      showToast('Kwitansi berhasil diverifikasi & disetujui.', 'success');
+      addLog(`Menyetujui kwitansi ID: ${id}`);
+      fetchRecords();
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'Gagal memproses persetujuan';
+      showToast(`Gagal menyetujui: ${errMsg}`, 'error');
+    }
   };
 
   const handleSaveRejection = async () => {
     if (rejectModalRecordId === null) return;
     try {
-      await supabase.from('kwitansi_header').update({ 
+      const { error } = await supabase.from('kwitansi_header').update({ 
         status_verifikasi: 'Ditolak',
         catatan_penolakan: rejectionReasonInput || 'Berkas perlu diperbaiki.'
       }).eq('id', rejectModalRecordId);
+
+      if (error) throw error;
 
       showToast('Kwitansi berhasil ditolak dengan catatan.', 'error');
       addLog(`Menolak kwitansi ID: ${rejectModalRecordId} dengan alasan: ${rejectionReasonInput}`);
       setRejectModalRecordId(null);
       setRejectionReasonInput('');
       fetchRecords();
-    } catch (err: any) {
-      showToast(`Gagal menolak kwitansi: ${err.message}`, 'error');
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'Gagal menyimpan penolakan';
+      showToast(`Gagal menolak kwitansi: ${errMsg}`, 'error');
     }
   };
 
   const handleBulkApprove = async () => {
     if (selectedIds.length === 0) return;
     try {
-      await supabase.from('kwitansi_header').update({ status_verifikasi: 'Disetujui' }).in('id', selectedIds);
+      const { error } = await supabase.from('kwitansi_header').update({ status_verifikasi: 'Disetujui' }).in('id', selectedIds);
+      if (error) throw error;
+
       showToast(`${selectedIds.length} kwitansi terpilih berhasil disetujui massal!`, 'success');
       addLog(`Persetujuan massal untuk ${selectedIds.length} berkas.`);
       setSelectedIds([]);
       fetchRecords();
-    } catch (err: any) {
-      showToast(`Gagal menyetujui massal: ${err.message}`, 'error');
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'Gagal menyetujui massal';
+      showToast(`Gagal menyetujui massal: ${errMsg}`, 'error');
     }
   };
 
   const handleBulkLockToggle = async (lockState: boolean) => {
     if (selectedIds.length === 0) return;
     try {
-      await supabase.from('kwitansi_header').update({ is_locked: lockState }).in('id', selectedIds);
+      const { error } = await supabase.from('kwitansi_header').update({ is_locked: lockState }).in('id', selectedIds);
+      if (error) throw error;
+
       showToast(`${selectedIds.length} berkas berhasil di-${lockState ? 'kunci' : 'buka kunci'} massal!`, 'info');
       addLog(`Mengubah status kunci massal (${lockState ? 'Locked' : 'Unlocked'}) untuk ${selectedIds.length} berkas.`);
       setSelectedIds([]);
       fetchRecords();
-    } catch (err: any) {
-      showToast(`Gagal mengubah status kunci massal: ${err.message}`, 'error');
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'Gagal mengubah status kunci massal';
+      showToast(`Gagal mengubah status kunci massal: ${errMsg}`, 'error');
     }
   };
 
   const handleToggleLock = async (id: number, currentLocked: boolean) => {
-    await supabase.from('kwitansi_header').update({ is_locked: !currentLocked }).eq('id', id);
-    showToast(`Status kunci diubah menjadi ${!currentLocked ? 'Locked' : 'Unlocked'}.`, 'info');
-    addLog(`Mengubah status kunci ID ${id} menjadi ${!currentLocked ? 'Locked' : 'Unlocked'}`);
-    fetchRecords();
+    try {
+      const { error } = await supabase.from('kwitansi_header').update({ is_locked: !currentLocked }).eq('id', id);
+      if (error) throw error;
+
+      showToast(`Status kunci diubah menjadi ${!currentLocked ? 'Locked' : 'Unlocked'}.`, 'info');
+      addLog(`Mengubah status kunci ID ${id} menjadi ${!currentLocked ? 'Locked' : 'Unlocked'}`);
+      fetchRecords();
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'Gagal mengubah status kunci';
+      showToast(`Gagal mengubah kunci: ${errMsg}`, 'error');
+    }
   };
 
   const handleDelete = async (id: number) => {
     if (confirm('PERINGATAN SUPER ADMIN: Hapus permanen data kwitansi ini?')) {
-      await supabase.from('kwitansi_header').delete().eq('id', id);
-      showToast('Kwitansi berhasil dihapus permanen.', 'error');
-      addLog(`Menghapus permanen kwitansi ID: ${id}`);
-      fetchRecords();
+      try {
+        const { error } = await supabase.from('kwitansi_header').delete().eq('id', id);
+        if (error) throw error;
+
+        showToast('Kwitansi berhasil dihapus permanen.', 'error');
+        addLog(`Menghapus permanen kwitansi ID: ${id}`);
+        fetchRecords();
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : 'Gagal menghapus data';
+        showToast(`Gagal menghapus: ${errMsg}`, 'error');
+      }
     }
   };
 
   const handleSaveSuperAdminEdit = async () => {
     if (!editingRecord) return;
     try {
-      await supabase.from('kwitansi_header').update({
+      const { error } = await supabase.from('kwitansi_header').update({
         sudah_terima_dari: editingRecord.sudah_terima_dari,
         untuk_pembayaran: editingRecord.untuk_pembayaran,
         jumlah: editingRecord.jumlah,
@@ -222,12 +253,15 @@ export default function AdminKwitansiPage() {
         keterangan_lembar: editingRecord.keterangan_lembar
       }).eq('id', editingRecord.id);
 
+      if (error) throw error;
+
       showToast('Kwitansi berhasil diperbarui oleh Super Admin!', 'success');
       addLog(`Memperbarui data master kwitansi No. Bukti: ${editingRecord.nomor_bukti}`);
       setEditingRecord(null);
       fetchRecords();
-    } catch (err: any) {
-      showToast(`Gagal memperbarui: ${err.message}`, 'error');
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'Gagal memperbarui data';
+      showToast(`Gagal memperbarui: ${errMsg}`, 'error');
     }
   };
 
@@ -394,7 +428,7 @@ export default function AdminKwitansiPage() {
                 <select
                   value={accountCodeFilter}
                   onChange={(e) => { setAccountCodeFilter(e.target.value); setCurrentPage(1); }}
-                  className="bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2 text-xs text-slate-700 font-bold focus:outline-none"
+                  className="bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2 text-xs text-slate-700 font-bold focus:outline-none cursor-pointer"
                 >
                   <option value="semua">Semua Kode Akun</option>
                   <option value="5.2.2.01.01">5.2.2.01.01 (ATK)</option>
@@ -410,7 +444,7 @@ export default function AdminKwitansiPage() {
                   type="date"
                   value={filterDate}
                   onChange={(e) => { setFilterDate(e.target.value); setCurrentPage(1); }}
-                  className="bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2 text-xs text-slate-700 font-bold focus:outline-none"
+                  className="bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2 text-xs text-slate-700 font-bold focus:outline-none cursor-pointer"
                 />
                 <button 
                   onClick={() => { setFilterDate(new Date().toISOString().slice(0, 10)); setCurrentPage(1); }}
@@ -427,7 +461,7 @@ export default function AdminKwitansiPage() {
                   Bulan Ini
                 </button>
                 {filterDate && (
-                  <button onClick={() => { setFilterDate(''); setCurrentPage(1); }} className="text-xs text-rose-600 font-bold hover:underline">Reset</button>
+                  <button onClick={() => { setFilterDate(''); setCurrentPage(1); }} className="text-xs text-rose-600 font-bold hover:underline cursor-pointer">Reset</button>
                 )}
               </div>
 
@@ -437,7 +471,7 @@ export default function AdminKwitansiPage() {
                 <select
                   value={sortBy}
                   onChange={(e) => setSortBy(e.target.value)}
-                  className="bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2 text-xs text-slate-700 font-bold focus:outline-none"
+                  className="bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2 text-xs text-slate-700 font-bold focus:outline-none cursor-pointer"
                 >
                   <option value="terbaru">Urutkan: Terbaru</option>
                   <option value="terlama">Urutkan: Terlama</option>
@@ -794,7 +828,7 @@ export default function AdminKwitansiPage() {
                 </div>
                 <div>
                   <label className="font-bold text-slate-700 block mb-1">Pilih Keterangan Lembar</label>
-                  <select value={editingRecord.keterangan_lembar} onChange={(e) => setEditingRecord({ ...editingRecord, keterangan_lembar: e.target.value })} className="w-full bg-slate-50 border rounded-xl p-2 font-bold">
+                  <select value={editingRecord.keterangan_lembar} onChange={(e) => setEditingRecord({ ...editingRecord, keterangan_lembar: e.target.value })} className="w-full bg-slate-50 border rounded-xl p-2 font-bold cursor-pointer">
                     <option value="Lembar 1 : Pembukuan">Lembar 1 : Pembukuan</option>
                     <option value="Lembar 2 : Penerimaan">Lembar 2 : Penerimaan</option>
                   </select>
