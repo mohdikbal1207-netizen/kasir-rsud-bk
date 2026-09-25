@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { Database, Download, RefreshCcw, Search, Activity, PlusCircle, Edit3, Trash2, Calendar, ChevronLeft, ChevronRight, Copy, Check, FilterX, ArrowUpDown, AlertCircle, Clock, Zap, ToggleLeft, ToggleRight, ListFilter, User, Target, ArrowUp, FileJson, AlignJustify, List, Command, Maximize2, X, ShieldAlert } from 'lucide-react';
+import { Database, Download, RefreshCcw, Search, Activity, PlusCircle, Edit3, Trash2, Calendar, ChevronLeft, ChevronRight, Copy, Check, FilterX, AlertCircle, Clock, Zap, ToggleLeft, ToggleRight, ListFilter, User, Target, ArrowUp, FileJson, AlignJustify, List, Maximize2, X, ShieldAlert } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import AdminHeader from '@/components/admin/AdminHeader';
 import AdminFooter from '@/components/admin/AdminFooter';
@@ -20,7 +20,7 @@ export default function AuditLogsPage() {
   const [dateTo, setDateTo] = useState<string>('');
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc'); 
   const [isLiveMode, setIsLiveMode] = useState<boolean>(false); 
-  const [countdown, setCountdown] = useState<number>(15); // Baru: Timer hitung mundur live mode
+  const [countdown, setCountdown] = useState<number>(15);
 
   // State Pagination & UI Interaktif
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -36,7 +36,7 @@ export default function AuditLogsPage() {
     content: null,
   });
 
-  // Baru: State untuk Modal Pembersihan / Purge Log Lama
+  // State untuk Modal Pembersihan / Purge Log Lama
   const [showPurgeModal, setShowPurgeModal] = useState<boolean>(false);
   const [purgePassword, setPurgePassword] = useState<string>('');
   const [isPurging, setIsPurging] = useState<boolean>(false);
@@ -58,6 +58,8 @@ export default function AuditLogsPage() {
       if (!error && data) {
         setLogs(data);
         if (!silentLoad) setCurrentPage(1);
+      } else {
+        console.error('Supabase error:', error);
       }
     } catch (err) {
       console.error('Gagal memuat audit logs:', err);
@@ -70,7 +72,6 @@ export default function AuditLogsPage() {
     fetchLogs();
   }, []);
 
-  // Baru: Efek Timer Live Mode dengan Hitung Mundur 15 Detik
   useEffect(() => {
     let interval: NodeJS.Timeout;
     let timerInterval: NodeJS.Timeout;
@@ -131,6 +132,7 @@ export default function AuditLogsPage() {
         (log.action || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
         (log.admin_id || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
         (log.performed_by || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (log.description || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
         (log.record_id || '').toLowerCase().includes(searchTerm.toLowerCase());
 
       const matchesAction = actionFilter === 'ALL' || log.action === actionFilter;
@@ -246,7 +248,7 @@ export default function AuditLogsPage() {
       alert('Tidak ada data log untuk diekspor.');
       return;
     }
-    const headers = ['Waktu', 'Nama Tabel', 'Aksi', 'ID Record', 'Admin ID', 'Dilakukan Oleh', 'Data Lama', 'Data Baru'];
+    const headers = ['Waktu', 'Nama Tabel', 'Aksi', 'ID Record', 'Admin ID', 'Performed By', 'Deskripsi', 'Data Lama', 'Data Baru'];
     const rows = filteredLogs.map(log => [
       `"${new Date(log.created_at).toLocaleString('id-ID')}"`,
       `"${log.table_name || '-'}"`,
@@ -254,6 +256,7 @@ export default function AuditLogsPage() {
       `"${log.record_id || '-'}"`,
       `"${log.admin_id || '-'}"`,
       `"${log.performed_by || '-'}"`,
+      `"${log.description ? String(log.description).replace(/"/g, '""') : '-'}"`,
       `"${log.old_data ? JSON.stringify(log.old_data).replace(/"/g, '""') : '-'}"`,
       `"${log.new_data ? JSON.stringify(log.new_data).replace(/"/g, '""') : '-'}"`
     ]);
@@ -282,7 +285,6 @@ export default function AuditLogsPage() {
     document.body.removeChild(link);
   };
 
-  // Baru: Fungsi Pembersihan Log (Purge)
   const handlePurgeLogs = async () => {
     if (purgePassword !== 'RSUD_BUKITKERMAN_ADMIN') {
       alert('Kode verifikasi administrator salah!');
@@ -290,7 +292,7 @@ export default function AuditLogsPage() {
     }
     setIsPurging(true);
     try {
-      const { error } = await supabase.from('audit_logs').delete().neq('id', '0'); // Hapus semua baris
+      const { error } = await supabase.from('audit_logs').delete().neq('id', '0');
       if (error) throw error;
       alert('Semua riwayat audit log berhasil dibersihkan.');
       setShowPurgeModal(false);
@@ -319,12 +321,12 @@ export default function AuditLogsPage() {
     const obj: any = {};
     if (dataLama) obj.data_lama = dataLama;
     if (dataBaru) obj.data_baru = dataBaru;
-    if (Object.keys(obj).length === 0) return 'Data kosong atau tidak tersedia.';
+    if (Object.keys(obj).length === 0) return 'Data payload kosong.';
     return JSON.stringify(obj, null, 2);
   };
 
   const getChangedFields = (oldData: any, newData: any) => {
-    if (!oldData || !newData) return [];
+    if (!oldData || !newData || typeof oldData !== 'object' || typeof newData !== 'object') return [];
     const changed: string[] = [];
     const keys = new Set([...Object.keys(oldData), ...Object.keys(newData)]);
     
@@ -348,7 +350,7 @@ export default function AuditLogsPage() {
         backUrl="/admin"
       />
 
-      {/* Modal Full-Screen Inspector untuk Payload JSON */}
+      {/* Modal Inspector Detail JSON */}
       {inspectModalData.isOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-[#0f172a] border border-slate-700 rounded-3xl w-full max-w-4xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
@@ -373,7 +375,7 @@ export default function AuditLogsPage() {
               <button
                 onClick={() => {
                   navigator.clipboard.writeText(JSON.stringify(inspectModalData.content, null, 2));
-                  alert('Payload berhasil disalin ke clipboard!');
+                  alert('Data JSON berhasil disalin ke clipboard!');
                 }}
                 className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs transition flex items-center gap-1.5"
               >
@@ -390,7 +392,7 @@ export default function AuditLogsPage() {
         </div>
       )}
 
-      {/* Baru: Modal Konfirmasi Purge / Hapus Log Database */}
+      {/* Modal Purge */}
       {showPurgeModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white border border-slate-200 rounded-3xl w-full max-w-md p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-200">
@@ -724,8 +726,8 @@ export default function AuditLogsPage() {
                   <th className={`${tdPad} border-b border-slate-200 bg-slate-100 transition-all`}>Nama Tabel</th>
                   <th className={`${tdPad} border-b border-slate-200 text-center bg-slate-100 transition-all`}>Aksi</th>
                   <th className={`${tdPad} border-b border-slate-200 bg-slate-100 transition-all`}>ID Record</th>
-                  <th className={`${tdPad} border-b border-slate-200 bg-slate-100 transition-all`}>Dilakukan Oleh</th>
-                  <th className={`${tdPad} border-b border-slate-200 bg-slate-100 transition-all`}>Detail Perubahan</th>
+                  <th className={`${tdPad} border-b border-slate-200 bg-slate-100 transition-all`}>Admin / Pelaku</th>
+                  <th className={`${tdPad} border-b border-slate-200 bg-slate-100 transition-all`}>Payload Data (JSON / Detail)</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium bg-white">
@@ -781,7 +783,7 @@ export default function AuditLogsPage() {
                         </td>
                         <td className={`${tdPad} font-bold text-slate-900 align-top transition-all`}>
                           <span className={`px-3 py-1.5 rounded-lg border text-[11px] ${getTableColor(log.table_name)}`}>
-                            {log.table_name}
+                            {log.table_name || '-'}
                           </span>
                         </td>
                         <td className={`${tdPad} text-center align-top transition-all`}>
@@ -790,7 +792,7 @@ export default function AuditLogsPage() {
                             log.action === 'UPDATE' ? 'bg-amber-100 text-amber-700 border border-amber-200' :
                             'bg-rose-100 text-rose-700 border border-rose-200'
                           }`}>
-                            {log.action}
+                            {log.action || 'INFO'}
                           </span>
                         </td>
                         <td className={`${tdPad} text-slate-500 font-mono text-[11px] align-top transition-all`}>
@@ -814,9 +816,9 @@ export default function AuditLogsPage() {
                         <td className={`${tdPad} align-top transition-all`}>
                           <div className="flex flex-col max-w-[140px]">
                              <span className="text-slate-800 font-bold truncate" title={log.performed_by || log.admin_id}>
-                               {log.performed_by || 'Sistem / Anonim'}
+                               {log.performed_by || log.admin_id || 'Sistem'}
                              </span>
-                             {log.admin_id && <span className="text-[9px] text-slate-400 font-mono truncate mt-1 bg-slate-50 px-1 py-0.5 rounded border border-slate-100" title={log.admin_id}>{log.admin_id}</span>}
+                             {log.target_user_id && <span className="text-[9px] text-slate-400 font-mono truncate mt-1 bg-slate-50 px-1 py-0.5 rounded border border-slate-100" title={log.target_user_id}>Target: {log.target_user_id}</span>}
                           </div>
                         </td>
                         <td className={`${tdPad} text-slate-600 font-mono align-top w-[40%] transition-all`}>
@@ -850,6 +852,12 @@ export default function AuditLogsPage() {
                                   {copiedId === log.id ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                                 </button>
                                 
+                                {log.description && (
+                                  <div className="p-3 bg-slate-800/80 text-slate-300 border-b border-slate-700 text-xs font-sans">
+                                    <strong className="text-emerald-400">Deskripsi:</strong> {log.description}
+                                  </div>
+                                )}
+
                                 {log.action === 'UPDATE' && log.old_data && log.new_data ? (
                                   <div className="grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:divide-x divide-slate-700">
                                     <div className="p-4 overflow-x-auto max-h-64 scrollbar-thin scrollbar-thumb-slate-600 scrollbar-track-transparent bg-[#151f32]">
@@ -882,12 +890,12 @@ export default function AuditLogsPage() {
                               </div>
                             </details>
 
-                            {/* Tombol Quick Expand Modal Inspector */}
+                            {/* Tombol Inspector Modal */}
                             <button
                               onClick={() => setInspectModalData({
                                 isOpen: true,
                                 title: `Inspeksi Log [${log.table_name} - ${log.action}] ID: ${log.record_id || log.id}`,
-                                content: { id: log.id, table: log.table_name, action: log.action, record_id: log.record_id, performed_by: log.performed_by || log.admin_id, created_at: log.created_at, old_data: log.old_data, new_data: log.new_data }
+                                content: log
                               })}
                               className="p-2 bg-slate-100 hover:bg-emerald-50 text-slate-500 hover:text-emerald-600 border border-slate-200 rounded-lg transition"
                               title="Perbesar / Inspector Modal"
