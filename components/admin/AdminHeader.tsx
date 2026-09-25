@@ -68,10 +68,11 @@ export default function AdminHeader({
   const [isOnline, setIsOnline] = useState<boolean>(true);
   const [serverLoad] = useState<string>('Normal (14%)');
 
-  // Refs untuk deteksi klik di luar komponen dropdown
+  // Refs untuk deteksi klik di luar komponen dropdown & Throttle Write Ingestion
   const notifRef = useRef<HTMLDivElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
   const diagnosticRef = useRef<HTMLDivElement>(null);
+  const lastMarkAsReadTimeRef = useRef<number>(0);
 
   // Synchronize Notifications with Supabase (Realtime)
   useEffect(() => {
@@ -167,17 +168,29 @@ export default function AdminHeader({
     };
   }, []);
 
-  // Handler Tandai Semua Notifikasi Sudah Dibaca
+  // Handler Tandai Semua Notifikasi Sudah Dibaca dengan Throttle Write Ingestion (Mencegah Database Bloat)
   const handleMarkAllAsRead = async () => {
+    if (unreadCount === 0) return;
+
+    const now = Date.now();
+    // Throttle 5 detik agar tidak terjadi spam write query beruntun ke database saat dropdown sering dibuka-tutup
+    if (now - lastMarkAsReadTimeRef.current < 5000) {
+      setUnreadCount(0);
+      setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
+      return;
+    }
+    lastMarkAsReadTimeRef.current = now;
+
     setUnreadCount(0);
     setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
 
     if (supabaseUrl && supabaseAnonKey) {
-      await supabase
+      supabase
         .from('notifications')
         .update({ is_read: true })
         .or(`role.eq.${currentRole},role.eq.all`)
-        .eq('is_read', false);
+        .eq('is_read', false)
+        .then(() => {}, () => {});
     }
   };
 

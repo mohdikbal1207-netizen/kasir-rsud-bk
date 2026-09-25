@@ -41,6 +41,12 @@ interface PrintLogItem {
 export default function PusatCetakAdmin() {
   const router = useRouter();
   const searchInputRef = useRef<HTMLInputElement>(null);
+   
+  // [OPTIMASI EGRESS & LOG INGESTION]: Ref untuk AbortController guna membatalkan request duplikat/gantung
+  const abortControllerRef = useRef<AbortController | null>(null);
+  
+  // [OPTIMASI EGRESS & LOG INGESTION]: Ref Throttle untuk mencegah spam penulisan log ke server/database agar tidak bengkak
+  const lastLogTimestampRef = useRef<{ [key: string]: number }>({});
 
   const [dataList, setDataList] = useState<AdminReportRecord[]>([]);
   const [summary, setSummary] = useState({ totalTransaksi: 0, grandTotalPendapatan: 0 });
@@ -62,7 +68,7 @@ export default function PusatCetakAdmin() {
   const [sortField, setSortField] = useState<'tanggal_record' | 'nama_pasien' | 'total_nominal'>('tanggal_record');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [selectedIds, setSelectedIds] = useState<(string | number)[]>([]);
-  
+   
   // Mode Cetak Pintar
   const [printMode, setPrintMode] = useState<'ALL' | 'BATCH' | 'THERMAL'>('ALL');
   const [printLayoutMode, setPrintLayoutMode] = useState<'TABLE' | 'EXECUTIVE_SUMMARY'>('TABLE');
@@ -98,15 +104,37 @@ export default function PusatCetakAdmin() {
   const [remunerasiPersen, setRemunerasiPersen] = useState<number>(40); 
   const [spiAuditStatus, setSpiAuditStatus] = useState<boolean>(true); 
 
-  // [PENYEMPURNAAN]: Membungkus showToast dengan useCallback agar referensinya stabil
   const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 4000);
   }, []);
 
-  // [PENYEMPURNAAN]: Membungkus formatter dengan useCallback
   const formatRupiah = useCallback((num: number) => {
     return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(num || 0);
+  }, []);
+
+  // === FUNGSI LOG INGESTION & EGRESS TRACKING DENGAN THROTTLE AMAN ===
+  const ingestAuditLog = useCallback(async (actionType: string, targetId: string, description: string) => {
+    try {
+      const logKey = `${actionType}_${targetId}`;
+      const now = Date.now();
+      const lastTime = lastLogTimestampRef.current[logKey] || 0;
+      
+      // Throttle 3 detik untuk mencegah lonjakan/spam penulisan log
+      if (now - lastTime < 3000) return;
+      lastLogTimestampRef.current[logKey] = now;
+
+      // Non-blocking background log transmission ke server (jika endpoint tersedia)
+      fetch('/api/admin/audit-log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action_type: actionType, target_id: targetId, description, timestamp: new Date().toISOString() })
+      }).catch(() => {
+        // Fallback aman jika endpoint audit belum aktif sepenuhnya
+      });
+    } catch (err) {
+      console.warn('Audit Log Notice:', err);
+    }
   }, []);
 
   const renderFormattedInsight = useCallback((text: string) => {
@@ -119,7 +147,6 @@ export default function PusatCetakAdmin() {
     });
   }, []);
 
-  // [PENYEMPURNAAN]: Membungkus handleSort dengan useCallback
   const handleSort = useCallback((field: 'tanggal_record' | 'nama_pasien' | 'total_nominal') => {
     if (sortField === field) {
       setSortDirection(prev => (prev === 'asc' ? 'desc' : 'asc'));
@@ -129,7 +156,14 @@ export default function PusatCetakAdmin() {
     }
   }, [sortField]);
 
+  // [OPTIMASI EGRESS & LOG INGESTION]: Meneruskan semua filter ke parameter API agar database memfilter di server
   const fetchAdminReportData = useCallback(async () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     setIsLoading(true);
     setSelectedIds([]);
     setCurrentPage(1);
@@ -137,8 +171,11 @@ export default function PusatCetakAdmin() {
       let url = `/api/admin/pusat-cetak?jenis_layanan=${jenisLayanan}`;
       if (startDate) url += `&start_date=${startDate}`;
       if (endDate) url += `&end_date=${endDate}`;
+      if (penjaminFilter !== 'semua') url += `&penjamin=${penjaminFilter}`;
+      if (statusBayarFilter !== 'semua') url += `&status_bayar=${statusBayarFilter}`;
+      if (metodeBayarFilter !== 'semua') url += `&metode_bayar=${metodeBayarFilter}`;
 
-      const response = await fetch(url);
+      const response = await fetch(url, { signal: controller.signal });
       const result = await response.json();
 
       if (result.success) {
@@ -148,23 +185,24 @@ export default function PusatCetakAdmin() {
       } else {
         console.error('Gagal memuat laporan admin:', result.error);
         setDataList([]);
-        // [PENYEMPURNAAN]: Memberi notifikasi UI jika API merespon dengan error
         showToast(`Gagal memuat data: ${result.error || 'Kesalahan Server'}`);
       }
-    } catch (err) {
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        console.log('Fetch dibatalkan untuk efisiensi.');
+        return;
+      }
       console.error('Kesalahan jaringan saat mengambil laporan admin:', err);
-      // [PENYEMPURNAAN]: Menangani error jaringan/CORS dengan notifikasi visual
       showToast('Koneksi terputus. Gagal memuat laporan admin.');
     } finally {
       setIsLoading(false);
     }
-  }, [startDate, endDate, jenisLayanan, showToast]);
+  }, [startDate, endDate, jenisLayanan, penjaminFilter, statusBayarFilter, metodeBayarFilter, showToast]);
 
   useEffect(() => {
     fetchAdminReportData();
   }, [fetchAdminReportData]);
 
-  // [PENYEMPURNAAN]: Shortcut Keyboard Global dengan referensi terbaru
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -181,7 +219,6 @@ export default function PusatCetakAdmin() {
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
         e.preventDefault();
-        // Menunda eksekusi cetak jika preview belum terbuka
         setPrintMode('ALL');
         setShowPreviewModal(true);
       }
@@ -194,7 +231,6 @@ export default function PusatCetakAdmin() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [fetchAdminReportData]);
 
-  // [PENYEMPURNAAN]: Semua handler tanggal dibungkus useCallback
   const handleSetToday = useCallback(() => {
     const today = new Date().toISOString().split('T')[0];
     setStartDate(today);
@@ -268,7 +304,7 @@ export default function PusatCetakAdmin() {
         item.no_rm?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         item.no_reg?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         String(item.id).toLowerCase().includes(searchTerm.toLowerCase());
-      
+       
       const penjaminStr = (item.penjaminan || item.jenis_penjaminan || item.penjamin || 'UMUM').toUpperCase();
       let matchPenjamin = true;
       if (penjaminFilter === 'bpjs') matchPenjamin = penjaminStr.includes('BPJS');
@@ -316,17 +352,16 @@ export default function PusatCetakAdmin() {
   const executiveInsightText = useMemo(() => {
     const entries = Object.entries(unitBreakdown.breakdown);
     if (entries.length === 0) return 'Belum ada data transaksi yang cukup untuk dianalisis pada periode ini.';
-    
+     
     const sortedUnits = [...entries].sort((a, b) => b[1].total - a[1].total);
     const topUnit = sortedUnits[0];
     const topPercentage = unitBreakdown.totalFilteredNominal > 0 ? ((topUnit[1].total / unitBreakdown.totalFilteredNominal) * 100).toFixed(1) : 0;
-    
+     
     return `Analisis Otomatis: Unit **${topUnit[0].toUpperCase()}** menjadi kontributor pendapatan terbesar dengan total **${formatRupiah(topUnit[1].total)}** (${topPercentage}% dari total omset). Rasio pelunasan kas tercatat ${paymentHealthStats.percentage}%. Verifikasi keuangan tervalidasi sistem RSUD Bukit Kerman.`;
   }, [unitBreakdown, paymentHealthStats, formatRupiah]);
 
   const sortedData = useMemo(() => {
     return [...filteredData].sort((a, b) => {
-      // [PERBAIKAN TS2352 VERCEL]: Menggunakan as any agar lolos Vercel Build tanpa menghapus logika lama
       let valA: any = (a as any)[sortField] || '';
       let valB: any = (b as any)[sortField] || '';
 
@@ -380,7 +415,10 @@ export default function PusatCetakAdmin() {
       `🛡️ Status Audit SPI: ${spiAuditStatus ? 'TELAH DIAUDIT & VALID' : 'BELUM DIPERIKSA'}%0A` +
       `_Diciptakan secara otomatis dari Pusat Cetak Admin SIMRS._`;
     window.open(`https://api.whatsapp.com/send?text=${text}`, '_blank');
-  }, [startDate, endDate, filteredData.length, unitBreakdown.totalFilteredNominal, remunerasiPersen, spiAuditStatus, formatRupiah]);
+    
+    // Ingest Egress log for WhatsApp sharing
+    ingestAuditLog('EGRESS_WHATSAPP_SUMMARY', 'SYSTEM', `Financial summary sent via WhatsApp. Total records: ${filteredData.length}`);
+  }, [startDate, endDate, filteredData.length, unitBreakdown.totalFilteredNominal, remunerasiPersen, spiAuditStatus, formatRupiah, ingestAuditLog]);
 
   const handlePrintAction = useCallback((mode: 'ALL' | 'BATCH' | 'THERMAL') => {
     if (mode === 'BATCH' && selectedIds.length === 0) {
@@ -400,12 +438,14 @@ export default function PusatCetakAdmin() {
     ]);
     setShowPreviewModal(false);
     setShowThermalModal(false);
-    
-    // Memberikan waktu rendering transisi DOM sebelum jendela Print OS terbuka
+     
+    // Ingest Log for Print Action
+    ingestAuditLog('PRINT_REPORT', mode, `Print action executed in mode: ${mode}`);
+
     setTimeout(() => {
       window.print();
     }, 500);
-  }, [selectedIds.length, activeThermalRecord, filteredData.length, showToast]);
+  }, [selectedIds.length, activeThermalRecord, filteredData.length, showToast, ingestAuditLog]);
 
   const handleOpenThermalReceipt = useCallback((item: AdminReportRecord) => {
     setActiveThermalRecord(item);
@@ -478,7 +518,10 @@ export default function PusatCetakAdmin() {
     link.click();
     document.body.removeChild(link);
     showToast('File Excel laporan berhasil diunduh.');
-  }, [filteredData, startDate, endDate, jenisLayanan, penjaminFilter, spiAuditStatus, showToast]);
+
+    // Ingest Egress log for Excel export
+    ingestAuditLog('DATA_EGRESS_EXCEL_EXPORT', 'SYSTEM_BULK', `Financial report exported to Excel. Total records: ${filteredData.length}`);
+  }, [filteredData, startDate, endDate, jenisLayanan, penjaminFilter, spiAuditStatus, showToast, ingestAuditLog]);
 
   return (
     <>
@@ -495,7 +538,7 @@ export default function PusatCetakAdmin() {
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
           }
-          
+           
           #app-screen-ui {
             display: none !important;
           }
@@ -543,9 +586,8 @@ export default function PusatCetakAdmin() {
         }
       `}</style>
 
-      {/* [PENYEMPURNAAN]: Penambahan role="main" untuk A11y */}
       <div id="app-screen-ui" role="main" className="min-h-screen bg-slate-50 text-slate-800 flex flex-col justify-between selection:bg-teal-500 selection:text-white relative pb-24 print:hidden">
-        
+         
         {toastMessage && (
           <div role="alert" aria-live="assertive" className="fixed bottom-6 right-6 z-50 bg-teal-900 text-white px-5 py-3 rounded-2xl text-xs font-bold shadow-2xl flex items-center gap-2 animate-bounce">
             <CheckCircle2 className="w-4 h-4 text-teal-300" /> {toastMessage}
@@ -581,7 +623,6 @@ export default function PusatCetakAdmin() {
           </div>
         )}
 
-        {/* MODALS */}
         {showThermalModal && activeThermalRecord && (
           <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4" role="dialog" aria-modal="true">
             <div className="bg-white rounded-3xl shadow-2xl max-w-sm w-full overflow-hidden border border-slate-200 animate-fadeIn flex flex-col">
@@ -589,7 +630,6 @@ export default function PusatCetakAdmin() {
                 <h3 className="text-xs font-bold text-slate-900 uppercase flex items-center gap-1.5">
                   <Receipt className="w-4 h-4 text-teal-600" /> Pratinjau Struk Termal Kasir
                 </h3>
-                {/* [PENYEMPURNAAN]: Tambahan aria-label untuk A11y */}
                 <button onClick={() => setShowThermalModal(false)} aria-label="Tutup pratinjau" className="p-1 rounded-xl hover:bg-slate-200 text-slate-500 cursor-pointer">
                   <X className="w-5 h-5" />
                 </button>
@@ -698,7 +738,7 @@ export default function PusatCetakAdmin() {
                   <X className="w-5 h-5" />
                 </button>
               </div>
-              
+               
               <div className="p-8 overflow-y-auto flex-1 space-y-6 bg-slate-100 font-serif text-xs text-black">
                 <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-300 space-y-4 mx-auto max-w-2xl">
                   <div className="flex items-center justify-between border-b-4 border-double border-black pb-3 gap-4">
@@ -962,7 +1002,7 @@ export default function PusatCetakAdmin() {
         />
 
         <div className="max-w-7xl mx-auto w-full space-y-6 p-6 md:p-10 flex-1">
-          
+           
           <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <div className="space-y-1">
               <div className="flex items-center gap-2">
@@ -976,7 +1016,7 @@ export default function PusatCetakAdmin() {
               <h1 className="text-2xl font-black text-slate-900">Pusat Cetak Laporan Manajerial &amp; Audit</h1>
               <p className="text-xs text-slate-500 font-medium">Rekapitulasi omset global rumah sakit lintas unit berdasarkan filter tanggal dan layanan.</p>
             </div>
-            
+             
             <div className="flex flex-wrap items-center gap-2">
               <button 
                 onClick={() => setShowColumnModal(true)}
@@ -1301,7 +1341,6 @@ export default function PusatCetakAdmin() {
                                          sumber.includes('igd') ? 'bg-rose-50 text-rose-700 border-rose-200' :
                                          sumber.includes('ranap') ? 'bg-indigo-50 text-indigo-700 border-indigo-200' :
                                          'bg-amber-50 text-amber-700 border-amber-200';
-                      // SOLUSI: Menggunakan w-px sesuai linter Tailwind
                       const paddingClass = tableDensity === 'compact' ? 'py-2 px-3.5' : 'p-3.5';
 
                       return (
@@ -1423,11 +1462,11 @@ export default function PusatCetakAdmin() {
       </div>
 
       <div id="print-document-ui" className="hidden print:block text-black bg-white w-full">
-        
+         
         <div className="print-watermark">{watermarkText}</div>
 
         {printMode === 'THERMAL' && activeThermalRecord ? (
-          
+           
           <div className="font-mono text-[9pt] p-1 w-[75mm] mx-auto">
             <div className="text-center mb-2 border-b border-dashed border-black pb-2">
               <p className="font-bold">RSUD BUKIT KERMAN</p>
@@ -1458,10 +1497,10 @@ export default function PusatCetakAdmin() {
           </div>
 
         ) : (
-          
+           
           <div className="font-serif">
             <div className="flex items-center justify-between border-b-[3px] border-double border-black pb-4 mb-4" style={{ pageBreakInside: 'avoid' }}>
-              <img src="/logo-pemkab.png" alt="Logo Pemkab" className="w-17.5 object-contain" /> {/* SOLUSI Tailwind linter: mengganti w-[70px] */}
+              <img src="/logo-pemkab.png" alt="Logo Pemkab" className="w-17.5 object-contain" />
               <div className="text-center flex-1">
                 <h3 className="text-[11pt] font-bold tracking-wide">PEMERINTAH KABUPATEN KERINCI</h3>
                 <h2 className="text-[12pt] font-bold tracking-wide">DINAS KESEHATAN</h2>

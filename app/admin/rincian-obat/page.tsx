@@ -120,6 +120,25 @@ export default function AdminRincianObatPage() {
   const [editingRecord, setEditingRecord] = useState<RincianObatRecord | null>(null);
   const [editItems, setEditItems] = useState<DetailItem[]>([]);
 
+  // ==========================================
+  // FITUR BARU: LOG INGESTION & EGRESS TRACKING
+  // ==========================================
+  const logIngestion = async (actionType: string, description: string, metadata?: any) => {
+    try {
+      await supabase.from('audit_logs').insert([
+        {
+          action_type: actionType,
+          description: description,
+          metadata: metadata ? JSON.stringify(metadata) : null,
+          created_at: new Date().toISOString()
+        }
+      ]);
+    } catch (err) {
+      // Non-blocking: Mencegah error aplikasi jika tabel audit_logs belum dimigrasi di database
+      console.warn('Log Ingestion warning (non-blocking):', err);
+    }
+  };
+
   const fetchRecords = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -191,6 +210,7 @@ export default function AdminRincianObatPage() {
 
   const handleApprove = async (id: number) => {
     await supabase.from('rincian_obat_header').update({ status_verifikasi: 'Disetujui' }).eq('id', id);
+    await logIngestion('APPROVE_RECORD', `Berkas rincian obat ID ${id} disetujui`, { id });
     showToast('Berkas rincian obat berhasil disetujui.', 'success');
     fetchRecords();
   };
@@ -199,6 +219,7 @@ export default function AdminRincianObatPage() {
     const reason = prompt("Masukkan alasan penolakan berkas rincian obat:");
     if (reason === null) return;
     await supabase.from('rincian_obat_header').update({ status_verifikasi: 'Ditolak' }).eq('id', id);
+    await logIngestion('REJECT_RECORD', `Berkas rincian obat ID ${id} ditolak. Alasan: ${reason}`, { id, reason });
     showToast(`Berkas rincian obat ditolak. Catatan: ${reason}`, 'error');
     fetchRecords();
   };
@@ -207,6 +228,7 @@ export default function AdminRincianObatPage() {
     if (selectedIds.length === 0) return;
     if (confirm(`Setujui ${selectedIds.length} berkas rincian obat terpilih?`)) {
       await supabase.from('rincian_obat_header').update({ status_verifikasi: 'Disetujui' }).in('id', selectedIds);
+      await logIngestion('BULK_APPROVE_RECORDS', `Persetujuan massal ${selectedIds.length} berkas`, { selectedIds });
       setSelectedIds([]);
       showToast(`${selectedIds.length} berkas berhasil disetujui secara massal.`, 'success');
       fetchRecords();
@@ -217,6 +239,7 @@ export default function AdminRincianObatPage() {
     if (selectedIds.length === 0) return;
     if (confirm(`Tolak ${selectedIds.length} berkas rincian obat terpilih?`)) {
       await supabase.from('rincian_obat_header').update({ status_verifikasi: 'Ditolak' }).in('id', selectedIds);
+      await logIngestion('BULK_REJECT_RECORDS', `Penolakan massal ${selectedIds.length} berkas`, { selectedIds });
       setSelectedIds([]);
       showToast(`${selectedIds.length} berkas ditolak secara massal.`, 'error');
       fetchRecords();
@@ -241,6 +264,7 @@ export default function AdminRincianObatPage() {
 
   const handleToggleLock = async (id: number, currentLocked: boolean) => {
     await supabase.from('rincian_obat_header').update({ is_locked: !currentLocked }).eq('id', id);
+    await logIngestion('TOGGLE_LOCK', `Status kunci kasir ID ${id} diubah menjadi ${!currentLocked ? 'Locked' : 'Unlocked'}`, { id, is_locked: !currentLocked });
     showToast(`Status kunci kasir berhasil diubah menjadi ${!currentLocked ? 'Locked' : 'Unlocked'}.`, 'warning');
     fetchRecords();
   };
@@ -248,6 +272,7 @@ export default function AdminRincianObatPage() {
   const handleDelete = async (id: number) => {
     if (confirm('PERINGATAN SUPER ADMIN: Hapus permanen data rincian obat ini?')) {
       await supabase.from('rincian_obat_header').delete().eq('id', id);
+      await logIngestion('DELETE_RECORD', `Data rincian obat ID ${id} dihapus permanen`, { id });
       showToast('Data rincian obat berhasil dihapus permanen.', 'error');
       fetchRecords();
     }
@@ -281,6 +306,7 @@ export default function AdminRincianObatPage() {
       }));
       await supabase.from('rincian_obat_detail').insert(detailsPayload);
 
+      await logIngestion('SUPER_ADMIN_EDIT', `Super admin mengedit data rincian obat ID ${editingRecord.id}`, { id: editingRecord.id });
       showToast('Data berhasil diperbarui oleh Super Admin!', 'success');
       setEditingRecord(null);
       fetchRecords();
@@ -289,7 +315,7 @@ export default function AdminRincianObatPage() {
     }
   };
 
-  const handleExportCSV = () => {
+  const handleExportCSV = async () => {
     if (records.length === 0) return alert('Tidak ada data untuk diekspor.');
     const headers = ["No Transaksi", "No RM", "Nama Pasien", "Layanan", "Penjamin", "Total Biaya", "Status Verifikasi"];
     const rows = records.map(r => [
@@ -312,10 +338,13 @@ export default function AdminRincianObatPage() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+
+    // Egress Tracking
+    await logIngestion('DATA_EGRESS_CSV_ALL', `Ekspor seluruh data audit CSV (${records.length} baris)`, { total_records: records.length });
     showToast('Laporan CSV audit berhasil diunduh.', 'success');
   };
 
-  const handleExportSelectedCSV = () => {
+  const handleExportSelectedCSV = async () => {
     if (selectedIds.length === 0) return alert('Pilih minimal satu berkas untuk diekspor.');
     const selectedRecords = records.filter(r => selectedIds.includes(r.id));
     const headers = ["No Transaksi", "No RM", "Nama Pasien", "Layanan", "Penjamin", "Total Biaya", "Status Verifikasi"];
@@ -339,7 +368,16 @@ export default function AdminRincianObatPage() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+
+    // Egress Tracking
+    await logIngestion('DATA_EGRESS_CSV_SELECTED', `Ekspor data terpilih CSV (${selectedRecords.length} baris)`, { selectedIds });
     showToast(`Berhasil mengunduh ${selectedRecords.length} data terpilih.`, 'success');
+  };
+
+  const handleTriggerPrint = async (mode: string, metaInfo?: any) => {
+    // Egress Tracking untuk cetak dokumen resmi / rekapitulasi
+    await logIngestion('DATA_EGRESS_PRINT', `Cetak dokumen laporan: ${mode}`, metaInfo);
+    window.print();
   };
 
   const formatRupiah = (num: number) => {
@@ -602,175 +640,175 @@ export default function AdminRincianObatPage() {
                 <button onClick={() => setStatusFilter('pending')} className={`px-3 py-1.5 rounded-xl transition cursor-pointer ${statusFilter === 'pending' ? 'bg-white text-amber-700 shadow-sm' : 'text-slate-500'}`}>Pending ({totalPending})</button>
                 <button onClick={() => setStatusFilter('disetujui')} className={`px-3 py-1.5 rounded-xl transition cursor-pointer ${statusFilter === 'disetujui' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500'}`}>Disetujui ({totalDisetujui})</button>
               </div>
+          </div>
+        </div>
+
+        {selectedIds.length > 0 && (
+          <div className="bg-purple-600 text-white p-3.5 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs font-bold shadow-lg print:hidden">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <span className="bg-purple-700 px-3 py-1 rounded-xl text-white">{selectedIds.length} Berkas Dipilih</span>
+              <span className="font-mono text-purple-100 font-bold">Total Nilai: {formatRupiah(selectedTotalNominal)}</span>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button onClick={handleExportSelectedCSV} className="bg-sky-600 hover:bg-sky-700 px-3 py-1.5 rounded-xl transition cursor-pointer shadow flex items-center gap-1">
+                <Download className="w-3.5 h-3.5" /> Ekspor Terpilih
+              </button>
+              <button onClick={handleBulkApprove} className="bg-emerald-600 hover:bg-emerald-700 px-3.5 py-1.5 rounded-xl transition cursor-pointer shadow">
+                ✓ Setujui Terpilih
+              </button>
+              <button onClick={handleBulkReject} className="bg-rose-600 hover:bg-rose-700 px-3.5 py-1.5 rounded-xl transition cursor-pointer shadow">
+                ✕ Tolak Terpilih
+              </button>
+              <button onClick={() => setSelectedIds([])} className="bg-purple-800 hover:bg-purple-900 px-3 py-1.5 rounded-xl transition cursor-pointer">
+                Batal
+              </button>
             </div>
           </div>
+        )}
 
-          {selectedIds.length > 0 && (
-            <div className="bg-purple-600 text-white p-3.5 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs font-bold shadow-lg print:hidden">
-              <div className="flex items-center gap-2.5 flex-wrap">
-                <span className="bg-purple-700 px-3 py-1 rounded-xl text-white">{selectedIds.length} Berkas Dipilih</span>
-                <span className="font-mono text-purple-100 font-bold">Total Nilai: {formatRupiah(selectedTotalNominal)}</span>
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <button onClick={handleExportSelectedCSV} className="bg-sky-600 hover:bg-sky-700 px-3 py-1.5 rounded-xl transition cursor-pointer shadow flex items-center gap-1">
-                  <Download className="w-3.5 h-3.5" /> Ekspor Terpilih
-                </button>
-                <button onClick={handleBulkApprove} className="bg-emerald-600 hover:bg-emerald-700 px-3.5 py-1.5 rounded-xl transition cursor-pointer shadow">
-                  ✓ Setujui Terpilih
-                </button>
-                <button onClick={handleBulkReject} className="bg-rose-600 hover:bg-rose-700 px-3.5 py-1.5 rounded-xl transition cursor-pointer shadow">
-                  ✕ Tolak Terpilih
-                </button>
-                <button onClick={() => setSelectedIds([])} className="bg-purple-800 hover:bg-purple-900 px-3 py-1.5 rounded-xl transition cursor-pointer">
-                  Batal
-                </button>
-              </div>
-            </div>
-          )}
-
-          <div className="border border-slate-200 rounded-2xl overflow-hidden print:border-none">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="bg-slate-100 text-slate-700 font-black uppercase border-b border-slate-200 text-[10px] print:bg-slate-200 print:text-black">
-                  <th className={`w-10 text-center print:hidden ${isCompact ? 'p-2' : 'p-3.5'}`}>
-                    <button onClick={handleToggleSelectAll} className="cursor-pointer">
-                      {selectedIds.length > 0 && selectedIds.length === sortedRecords.length ? (
-                        <CheckSquare className="w-4 h-4 text-purple-600" />
-                      ) : (
-                        <Square className="w-4 h-4 text-slate-400" />
-                      )}
-                    </button>
-                  </th>
-                  <th onClick={() => handleSort('created_at')} className={`cursor-pointer hover:bg-slate-200 transition ${isCompact ? 'p-2' : 'p-3.5'}`}>
-                    <div className="flex items-center gap-1">ID / Transaksi <ArrowUpDown className="w-3 h-3 text-slate-400 print:hidden" /></div>
-                  </th>
-                  <th onClick={() => handleSort('nama_pasien')} className={`cursor-pointer hover:bg-slate-200 transition ${isCompact ? 'p-2' : 'p-3.5'}`}>
-                    <div className="flex items-center gap-1">Pasien &amp; RM <ArrowUpDown className="w-3 h-3 text-slate-400 print:hidden" /></div>
-                  </th>
-                  <th className={isCompact ? 'p-2' : 'p-3.5'}>Layanan &amp; Penjamin</th>
-                  <th onClick={() => handleSort('total_biaya')} className={`text-right cursor-pointer hover:bg-slate-200 transition ${isCompact ? 'p-2' : 'p-3.5'}`}>
-                    <div className="flex items-center justify-end gap-1">Total Biaya <ArrowUpDown className="w-3 h-3 text-slate-400 print:hidden" /></div>
-                  </th>
-                  <th className={`text-center print:hidden ${isCompact ? 'p-2' : 'p-3.5'}`}>Akses Kunci</th>
-                  <th className={`text-center ${isCompact ? 'p-2' : 'p-3.5'}`}>Status Verifikasi</th>
-                  <th className={`text-center print:hidden ${isCompact ? 'p-2' : 'p-3.5'}`}>Aksi Super Admin</th>
+        <div className="border border-slate-200 rounded-2xl overflow-hidden print:border-none">
+          <table className="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr className="bg-slate-100 text-slate-700 font-black uppercase border-b border-slate-200 text-[10px] print:bg-slate-200 print:text-black">
+                <th className={`w-10 text-center print:hidden ${isCompact ? 'p-2' : 'p-3.5'}`}>
+                  <button onClick={handleToggleSelectAll} className="cursor-pointer">
+                    {selectedIds.length > 0 && selectedIds.length === sortedRecords.length ? (
+                      <CheckSquare className="w-4 h-4 text-purple-600" />
+                    ) : (
+                      <Square className="w-4 h-4 text-slate-400" />
+                    )}
+                  </button>
+                </th>
+                <th onClick={() => handleSort('created_at')} className={`cursor-pointer hover:bg-slate-200 transition ${isCompact ? 'p-2' : 'p-3.5'}`}>
+                  <div className="flex items-center gap-1">ID / Transaksi <ArrowUpDown className="w-3 h-3 text-slate-400 print:hidden" /></div>
+                </th>
+                <th onClick={() => handleSort('nama_pasien')} className={`cursor-pointer hover:bg-slate-200 transition ${isCompact ? 'p-2' : 'p-3.5'}`}>
+                  <div className="flex items-center gap-1">Pasien &amp; RM <ArrowUpDown className="w-3 h-3 text-slate-400 print:hidden" /></div>
+                </th>
+                <th className={isCompact ? 'p-2' : 'p-3.5'}>Layanan &amp; Penjamin</th>
+                <th onClick={() => handleSort('total_biaya')} className={`text-right cursor-pointer hover:bg-slate-200 transition ${isCompact ? 'p-2' : 'p-3.5'}`}>
+                  <div className="flex items-center justify-end gap-1">Total Biaya <ArrowUpDown className="w-3 h-3 text-slate-400 print:hidden" /></div>
+                </th>
+                <th className={`text-center print:hidden ${isCompact ? 'p-2' : 'p-3.5'}`}>Akses Kunci</th>
+                <th className={`text-center ${isCompact ? 'p-2' : 'p-3.5'}`}>Status Verifikasi</th>
+                <th className={`text-center print:hidden ${isCompact ? 'p-2' : 'p-3.5'}`}>Aksi Super Admin</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 font-medium">
+              {isLoading ? (
+                <tr><td colSpan={8} className="text-center py-8 text-slate-400">Memuat data audit...</td></tr>
+              ) : paginatedRecords.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="text-center py-12 text-slate-400">
+                    <div className="flex flex-col items-center justify-center space-y-2">
+                      <FileText className="w-8 h-8 text-slate-300" />
+                      <p className="text-xs font-bold text-slate-600">Tidak ada data rincian obat ditemukan.</p>
+                    </div>
+                  </td>
                 </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 font-medium">
-                {isLoading ? (
-                  <tr><td colSpan={8} className="text-center py-8 text-slate-400">Memuat data audit...</td></tr>
-                ) : paginatedRecords.length === 0 ? (
-                  <tr>
-                    <td colSpan={8} className="text-center py-12 text-slate-400">
-                      <div className="flex flex-col items-center justify-center space-y-2">
-                        <FileText className="w-8 h-8 text-slate-300" />
-                        <p className="text-xs font-bold text-slate-600">Tidak ada data rincian obat ditemukan.</p>
+              ) : (
+                paginatedRecords.map((r) => (
+                  <tr key={r.id} className="hover:bg-slate-50">
+                    <td className={`text-center print:hidden ${isCompact ? 'p-2' : 'p-3.5'}`}>
+                      <button onClick={() => handleToggleSelectOne(r.id)} className="cursor-pointer">
+                        {selectedIds.includes(r.id) ? (
+                          <CheckSquare className="w-4 h-4 text-purple-600" />
+                        ) : (
+                          <Square className="w-4 h-4 text-slate-300" />
+                        )}
+                      </button>
+                    </td>
+                    <td className={`font-mono font-bold text-slate-900 ${isCompact ? 'p-2' : 'p-3.5'}`}>
+                      <div className="flex items-center gap-1.5 group">
+                        <span onClick={() => handleCopyNoTransaksi(r.no_transaksi)} className="cursor-pointer hover:text-purple-600 transition" title="Klik untuk salin no transaksi">
+                          {r.no_transaksi}
+                        </span>
+                        <Copy className="w-3 h-3 text-slate-400 opacity-0 group-hover:opacity-100 transition cursor-pointer" onClick={() => handleCopyNoTransaksi(r.no_transaksi)} />
+                      </div>
+                      <span className="block text-[10px] text-slate-400 font-normal">{new Date(r.created_at).toLocaleDateString('id-ID')}</span>
+                    </td>
+                    <td className={isCompact ? 'p-2' : 'p-3.5'}>
+                      <strong className="block text-slate-800">{r.nama_pasien}</strong>
+                      <span className="text-[10px] text-amber-700 font-mono">{r.no_rm}</span>
+                    </td>
+                    <td className={isCompact ? 'p-2' : 'p-3.5'}>
+                      <span className="block font-bold text-slate-700">{r.jenis_layanan}</span>
+                      <span className="text-[10px] text-slate-500">{r.penjamin || 'Umum'}</span>
+                    </td>
+                    <td className={`text-right font-mono font-black text-slate-900 ${isCompact ? 'p-2' : 'p-3.5'}`}>{formatRupiah(r.total_biaya)}</td>
+                    <td className={`text-center print:hidden ${isCompact ? 'p-2' : 'p-3.5'}`}>
+                      <button
+                        onClick={() => handleToggleLock(r.id, r.is_locked)}
+                        className={`p-1.5 rounded-xl border transition cursor-pointer text-[10px] font-bold flex items-center gap-1 mx-auto ${
+                          r.is_locked ? 'bg-amber-50 text-amber-800 border-amber-300' : 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                        }`}
+                      >
+                        {r.is_locked ? <Lock className="w-3.5 h-3.5 text-amber-600" /> : <Unlock className="w-3.5 h-3.5 text-emerald-600" />}
+                        <span>{r.is_locked ? 'Locked' : 'Unlocked'}</span>
+                      </button>
+                    </td>
+                    <td className={`text-center ${isCompact ? 'p-2' : 'p-3.5'}`}>
+                      <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full uppercase ${
+                        r.status_verifikasi === 'Disetujui' ? 'bg-emerald-100 text-emerald-800' :
+                        r.status_verifikasi === 'Ditolak' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'
+                      }`}>
+                        {r.status_verifikasi}
+                      </span>
+                    </td>
+                    <td className={`text-center print:hidden ${isCompact ? 'p-2' : 'p-3.5'}`}>
+                      <div className="flex items-center justify-center gap-1">
+                        <button onClick={() => setDetailModalRecord(r)} className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition cursor-pointer" title="Inspeksi Rincian">
+                          <Eye className="w-3.5 h-3.5 text-purple-600" />
+                        </button>
+                        <button onClick={() => handleApprove(r.id)} className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl transition cursor-pointer" title="Setujui">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button onClick={() => handleReject(r.id)} className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl transition cursor-pointer" title="Tolak">
+                          <XCircle className="w-3.5 h-3.5" />
+                        </button>
+                        <button onClick={() => handleOpenEditModal(r)} className="p-1.5 bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-xl transition cursor-pointer" title="Edit Data">
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+                        <button onClick={() => handleDelete(r.id)} className="p-1.5 bg-slate-100 hover:bg-rose-100 text-slate-500 hover:text-rose-700 rounded-xl transition cursor-pointer" title="Hapus">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </td>
                   </tr>
-                ) : (
-                  paginatedRecords.map((r) => (
-                    <tr key={r.id} className="hover:bg-slate-50">
-                      <td className={`text-center print:hidden ${isCompact ? 'p-2' : 'p-3.5'}`}>
-                        <button onClick={() => handleToggleSelectOne(r.id)} className="cursor-pointer">
-                          {selectedIds.includes(r.id) ? (
-                            <CheckSquare className="w-4 h-4 text-purple-600" />
-                          ) : (
-                            <Square className="w-4 h-4 text-slate-300" />
-                          )}
-                        </button>
-                      </td>
-                      <td className={`font-mono font-bold text-slate-900 ${isCompact ? 'p-2' : 'p-3.5'}`}>
-                        <div className="flex items-center gap-1.5 group">
-                          <span onClick={() => handleCopyNoTransaksi(r.no_transaksi)} className="cursor-pointer hover:text-purple-600 transition" title="Klik untuk salin no transaksi">
-                            {r.no_transaksi}
-                          </span>
-                          <Copy className="w-3 h-3 text-slate-400 opacity-0 group-hover:opacity-100 transition cursor-pointer" onClick={() => handleCopyNoTransaksi(r.no_transaksi)} />
-                        </div>
-                        <span className="block text-[10px] text-slate-400 font-normal">{new Date(r.created_at).toLocaleDateString('id-ID')}</span>
-                      </td>
-                      <td className={isCompact ? 'p-2' : 'p-3.5'}>
-                        <strong className="block text-slate-800">{r.nama_pasien}</strong>
-                        <span className="text-[10px] text-amber-700 font-mono">{r.no_rm}</span>
-                      </td>
-                      <td className={isCompact ? 'p-2' : 'p-3.5'}>
-                        <span className="block font-bold text-slate-700">{r.jenis_layanan}</span>
-                        <span className="text-[10px] text-slate-500">{r.penjamin || 'Umum'}</span>
-                      </td>
-                      <td className={`text-right font-mono font-black text-slate-900 ${isCompact ? 'p-2' : 'p-3.5'}`}>{formatRupiah(r.total_biaya)}</td>
-                      <td className={`text-center print:hidden ${isCompact ? 'p-2' : 'p-3.5'}`}>
-                        <button
-                          onClick={() => handleToggleLock(r.id, r.is_locked)}
-                          className={`p-1.5 rounded-xl border transition cursor-pointer text-[10px] font-bold flex items-center gap-1 mx-auto ${
-                            r.is_locked ? 'bg-amber-50 text-amber-800 border-amber-300' : 'bg-emerald-50 text-emerald-800 border-emerald-300'
-                          }`}
-                        >
-                          {r.is_locked ? <Lock className="w-3.5 h-3.5 text-amber-600" /> : <Unlock className="w-3.5 h-3.5 text-emerald-600" />}
-                          <span>{r.is_locked ? 'Locked' : 'Unlocked'}</span>
-                        </button>
-                      </td>
-                      <td className={`text-center ${isCompact ? 'p-2' : 'p-3.5'}`}>
-                        <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full uppercase ${
-                          r.status_verifikasi === 'Disetujui' ? 'bg-emerald-100 text-emerald-800' :
-                          r.status_verifikasi === 'Ditolak' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'
-                        }`}>
-                          {r.status_verifikasi}
-                        </span>
-                      </td>
-                      <td className={`text-center print:hidden ${isCompact ? 'p-2' : 'p-3.5'}`}>
-                        <div className="flex items-center justify-center gap-1">
-                          <button onClick={() => setDetailModalRecord(r)} className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition cursor-pointer" title="Inspeksi Rincian">
-                            <Eye className="w-3.5 h-3.5 text-purple-600" />
-                          </button>
-                          <button onClick={() => handleApprove(r.id)} className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl transition cursor-pointer" title="Setujui">
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                          </button>
-                          <button onClick={() => handleReject(r.id)} className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl transition cursor-pointer" title="Tolak">
-                            <XCircle className="w-3.5 h-3.5" />
-                          </button>
-                          <button onClick={() => handleOpenEditModal(r)} className="p-1.5 bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-xl transition cursor-pointer" title="Edit Data">
-                            <Edit3 className="w-3.5 h-3.5" />
-                          </button>
-                          <button onClick={() => handleDelete(r.id)} className="p-1.5 bg-slate-100 hover:bg-rose-100 text-slate-500 hover:text-rose-700 rounded-xl transition cursor-pointer" title="Hapus">
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          {/* PAGINASI KONTROL */}
-          {sortedRecords.length > 0 && (
-            <div className="flex flex-col sm:flex-row items-center justify-between pt-4 border-t border-slate-100 text-xs print:hidden">
-              <span className="text-slate-500 font-medium">
-                Menampilkan <strong className="text-slate-900 font-bold">{Math.min((currentPage - 1) * itemsPerPage + 1, sortedRecords.length)}</strong> - <strong className="text-slate-900 font-bold">{Math.min(currentPage * itemsPerPage, sortedRecords.length)}</strong> dari <strong className="text-slate-900 font-bold">{sortedRecords.length}</strong> data audit
-              </span>
-              <div className="flex items-center gap-2 mt-3 sm:mt-0">
-                <button
-                  onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-                  disabled={currentPage === 1}
-                  className="p-2 rounded-xl border bg-white text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition flex items-center gap-1 font-bold cursor-pointer"
-                >
-                  <ChevronLeft className="w-4 h-4" /> Sebelumnya
-                </button>
-                <span className="px-3 py-1.5 bg-purple-50 text-purple-700 font-bold rounded-xl border border-purple-200">
-                  Hal. {currentPage} / {totalPages}
-                </span>
-                <button
-                  onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-                  disabled={currentPage === totalPages}
-                  className="p-2 rounded-xl border bg-white text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition flex items-center gap-1 font-bold cursor-pointer"
-                >
-                  Selanjutnya <ChevronRight className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          )}
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
+
+        {/* PAGINASI KONTROL */}
+        {sortedRecords.length > 0 && (
+          <div className="flex flex-col sm:flex-row items-center justify-between pt-4 border-t border-slate-100 text-xs print:hidden">
+            <span className="text-slate-500 font-medium">
+              Menampilkan <strong className="text-slate-900 font-bold">{Math.min((currentPage - 1) * itemsPerPage + 1, sortedRecords.length)}</strong> - <strong className="text-slate-900 font-bold">{Math.min(currentPage * itemsPerPage, sortedRecords.length)}</strong> dari <strong className="text-slate-900 font-bold">{sortedRecords.length}</strong> data audit
+            </span>
+            <div className="flex items-center gap-2 mt-3 sm:mt-0">
+              <button
+                onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                disabled={currentPage === 1}
+                className="p-2 rounded-xl border bg-white text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition flex items-center gap-1 font-bold cursor-pointer"
+              >
+                <ChevronLeft className="w-4 h-4" /> Sebelumnya
+              </button>
+              <span className="px-3 py-1.5 bg-purple-50 text-purple-700 font-bold rounded-xl border border-purple-200">
+                Hal. {currentPage} / {totalPages}
+            </span>
+            <button
+              onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+              disabled={currentPage === totalPages}
+              className="p-2 rounded-xl border bg-white text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition flex items-center gap-1 font-bold cursor-pointer"
+            >
+              Selanjutnya <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+        )}
+      </div>
       </main>
 
       {/* MODAL BULK PRINT (CETAK REKAPAN TERPILIH / SEMUA DENGAN KOP RESMI RSUD) */}
@@ -845,38 +883,38 @@ export default function AdminRincianObatPage() {
                           <td className="p-2.5 text-right font-mono text-sm">{formatRupiah(grandTotal)}</td>
                         </tr>
                       </>
-                    );
-                  })()}
-                </tbody>
-              </table>
-            </div>
+                  );
+                })()}
+              </tbody>
+            </table>
+          </div>
 
-            {/* BLOK TANDA TANGAN PEJABAT RESMI */}
-            <div className="pt-4 flex justify-between items-end font-sans text-xs">
-              <div>
-                <p className="font-bold text-slate-500">Mengetahui,</p>
-                <p className="font-bold">Direktur RSUD Bukit Kerman</p>
-                <div className="h-16"></div>
-                <p className="font-bold underline">( _______________________________ )</p>
-                <p className="text-[10px]">NIP. ...............................................</p>
-              </div>
-              <div className="text-right">
-                <p className="font-bold text-slate-500">Kerinci, {new Date().toLocaleDateString('id-ID')}</p>
-                <p className="font-bold">Tim Verifikasi &amp; Auditor</p>
-                <div className="h-16"></div>
-                <p className="font-bold underline">( _______________________________ )</p>
-                <p className="text-[10px]">NIP. ...............................................</p>
-              </div>
+          {/* BLOK TANDA TANGAN PEJABAT RESMI */}
+          <div className="pt-4 flex justify-between items-end font-sans text-xs">
+            <div>
+              <p className="font-bold text-slate-500">Mengetahui,</p>
+              <p className="font-bold">Direktur RSUD Bukit Kerman</p>
+              <div className="h-16"></div>
+              <p className="font-bold underline">( _______________________________ )</p>
+              <p className="text-[10px]">NIP. ...............................................</p>
             </div>
-
-            <div className="flex justify-end gap-2 pt-4 border-t border-slate-200 print:hidden">
-              <button onClick={() => setIsBulkPrintModalOpen(false)} className="px-4 py-2 bg-slate-200 text-slate-700 rounded-xl text-xs font-bold cursor-pointer">Tutup</button>
-              <button onClick={() => window.print()} className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold shadow flex items-center gap-1.5 cursor-pointer">
-                <Printer className="w-4 h-4" /> Cetak Laporan Resmi
-              </button>
+            <div className="text-right">
+              <p className="font-bold text-slate-500">Kerinci, {new Date().toLocaleDateString('id-ID')}</p>
+              <p className="font-bold">Tim Verifikasi &amp; Auditor</p>
+              <div className="h-16"></div>
+              <p className="font-bold underline">( _______________________________ )</p>
+              <p className="text-[10px]">NIP. ...............................................</p>
             </div>
           </div>
+
+          <div className="flex justify-end gap-2 pt-4 border-t border-slate-200 print:hidden">
+            <button onClick={() => setIsBulkPrintModalOpen(false)} className="px-4 py-2 bg-slate-200 text-slate-700 rounded-xl text-xs font-bold cursor-pointer">Tutup</button>
+            <button onClick={() => handleTriggerPrint('BULK_RECAP', { mode: bulkPrintMode })} className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold shadow flex items-center gap-1.5 cursor-pointer">
+              <Printer className="w-4 h-4" /> Cetak Laporan Resmi
+            </button>
+          </div>
         </div>
+      </div>
       )}
 
       {/* MODAL CETAK SLIP TRANSAKSI INDIVIDUAL */}
@@ -937,7 +975,7 @@ export default function AdminRincianObatPage() {
                       <td className="p-2 border-r border-black text-right font-mono">{formatRupiah(item.harga_satuan)}</td>
                       <td className="p-2 text-right font-mono font-bold">{formatRupiah(item.subtotal)}</td>
                     </tr>
-                  ))}
+                    ))}
                 </tbody>
               </table>
             </div>
@@ -964,7 +1002,7 @@ export default function AdminRincianObatPage() {
 
             <div className="flex justify-end gap-2 pt-4 border-t border-slate-200 print:hidden">
               <button onClick={() => setSlipPrintRecord(null)} className="px-4 py-2 bg-slate-200 text-slate-700 rounded-xl text-xs font-bold cursor-pointer">Tutup</button>
-              <button onClick={() => window.print()} className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold shadow flex items-center gap-1.5 cursor-pointer">
+              <button onClick={() => handleTriggerPrint('SINGLE_SLIP', { no_transaksi: slipPrintRecord.no_transaksi })} className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold shadow flex items-center gap-1.5 cursor-pointer">
                 <Printer className="w-4 h-4" /> Cetak Slip Resmi
               </button>
             </div>
@@ -1066,31 +1104,31 @@ export default function AdminRincianObatPage() {
                         <td className="p-2.5 text-right font-mono">{formatRupiah(item.subtotal)}</td>
                       </tr>
                     ))}
-                  </tbody>
-                </table>
-              </div>
+                </tbody>
+              </table>
             </div>
+          </div>
 
-            <div className="pt-3 border-t flex justify-between items-center text-xs">
-              <span className="font-bold text-slate-600">Total Biaya Netto: <strong className="font-mono text-slate-900">{formatRupiah(detailModalRecord.total_biaya)}</strong></span>
-              <div className="flex items-center gap-2">
-                <button 
-                  onClick={() => {
-                    const rec = detailModalRecord;
-                    setDetailModalRecord(null);
-                    setSlipPrintRecord(rec);
-                  }} 
-                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl flex items-center gap-1.5 cursor-pointer shadow"
-                >
-                  <Printer className="w-4 h-4" /> Cetak Slip
-                </button>
-                <button onClick={() => setDetailModalRecord(null)} className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-xl cursor-pointer">
-                  Tutup
-                </button>
-              </div>
+          <div className="pt-3 border-t flex justify-between items-center text-xs">
+            <span className="font-bold text-slate-600">Total Biaya Netto: <strong className="font-mono text-slate-900">{formatRupiah(detailModalRecord.total_biaya)}</strong></span>
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={() => {
+                  const rec = detailModalRecord;
+                  setDetailModalRecord(null);
+                  setSlipPrintRecord(rec);
+                }} 
+                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-xl flex items-center gap-1.5 cursor-pointer shadow"
+              >
+                <Printer className="w-4 h-4" /> Cetak Slip
+              </button>
+              <button onClick={() => setDetailModalRecord(null)} className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-xl cursor-pointer">
+                Tutup
+              </button>
             </div>
           </div>
         </div>
+      </div>
       )}
 
       {/* MODAL EDIT SUPER ADMIN */}
@@ -1153,24 +1191,24 @@ export default function AdminRincianObatPage() {
                         </td>
                       </tr>
                     ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-2 pt-2 border-t">
-              <button onClick={() => setEditingRecord(null)} className="px-4 py-2 bg-slate-200 text-slate-700 rounded-xl text-xs font-bold cursor-pointer">Batal</button>
-              <button onClick={handleSaveSuperAdminEdit} className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold shadow cursor-pointer flex items-center gap-1">
-                <Save className="w-4 h-4" /> Simpan Perubahan Super Admin
-              </button>
+                </tbody>
+              </table>
             </div>
           </div>
+
+          <div className="flex justify-end gap-2 pt-2 border-t">
+            <button onClick={() => setEditingRecord(null)} className="px-4 py-2 bg-slate-200 text-slate-700 rounded-xl text-xs font-bold cursor-pointer">Batal</button>
+            <button onClick={handleSaveSuperAdminEdit} className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold shadow cursor-pointer flex items-center gap-1">
+              <Save className="w-4 h-4" /> Simpan Perubahan Super Admin
+            </button>
+          </div>
         </div>
+      </div>
       )}
 
       <div className="print:hidden">
         <AdminFooter />
       </div>
-    </div>
+  </div>
   );
 }

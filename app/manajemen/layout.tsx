@@ -57,6 +57,37 @@ export default function ManajemenLayout({ children }: { children: React.ReactNod
   const lockInputRef = useRef<HTMLInputElement | null>(null);
   const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
 
+  // === REFS UNTUK OPTIMASI EGRESS & THROTTLE LOG INGESTION ===
+  const lastLogTimestampRef = useRef<{ [key: string]: number }>({});
+  const isCheckingLatencyRef = useRef<boolean>(false);
+  const isCheckingRevocationRef = useRef<boolean>(false);
+
+  // Fungsi Log Ingestion Aman dengan Throttle & Non-blocking
+  const ingestAuditLog = async (action: string, targetId: string, details: string) => {
+    try {
+      const logKey = `${action}_${targetId}`;
+      const now = Date.now();
+      const lastTime = lastLogTimestampRef.current[logKey] || 0;
+      
+      // Throttle 3 detik untuk mencegah spam penulisan log berulang
+      if (now - lastTime < 3000) return;
+      lastLogTimestampRef.current[logKey] = now;
+
+      const { data: { session } } = await supabase.auth.getSession();
+      const userEmail = session?.user?.email || 'system_manajemen';
+
+      supabase.from('audit_logs').insert({
+        admin_email: userEmail,
+        action_type: action,
+        target_user_id: targetId,
+        description: details,
+        timestamp: new Date().toISOString()
+      }).then(() => {}, () => {});
+    } catch (err) {
+      console.warn('Log Ingestion Notice:', err);
+    }
+  };
+
   // System Sound Alert via Web Audio API
   const playAlertSound = useCallback((type: 'lock' | 'warning' | 'success' | 'click') => {
     try {
@@ -117,11 +148,12 @@ export default function ManajemenLayout({ children }: { children: React.ReactNod
       }
       if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
       await supabase.auth.signOut();
+      await ingestAuditLog('MANAJEMEN_AUTO_LOGOUT', activeUserEmail, 'Session expired due to user inactivity.');
       router.replace('/login');
     } catch {
       router.replace('/login');
     }
-  }, [router]);
+  }, [router, activeUserEmail]);
 
   const resetInactivityTimers = useCallback(async () => {
     if (warningTimerRef.current) clearTimeout(warningTimerRef.current);
@@ -150,12 +182,15 @@ export default function ManajemenLayout({ children }: { children: React.ReactNod
     }, 30 * 60 * 1000); // Auto-logout setelah total 30 menit inaktif
   }, [handleAutoLogout, playAlertSound]);
 
-  // ================= FITUR BARU: PEMANTAUAN FORCE LOGOUT JARAK JAUH (REMOTE REVOCATION) =================
+  // ================= OPTIMIZED EGRESS: PEMANTAUAN FORCE LOGOUT JARAK JAUH =================
   useEffect(() => {
     if (!isAuthorized) return;
 
     let isMounted = true;
     const checkRemoteRevocation = async () => {
+      if (isCheckingRevocationRef.current) return;
+      isCheckingRevocationRef.current = true;
+
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session?.user) return;
@@ -167,18 +202,21 @@ export default function ManajemenLayout({ children }: { children: React.ReactNod
           .maybeSingle();
 
         if (isMounted && data && data.is_active === false) {
+          await ingestAuditLog('REMOTE_REVOCATION_LOGOUT', session.user.id, 'Session remotely revoked by admin.');
           await supabase.auth.signOut();
           router.replace('/login?reason=force_logout');
         }
       } catch (err) {
         console.error('Error checking remote session revocation:', err);
+      } finally {
+        isCheckingRevocationRef.current = false;
       }
     };
 
-    // Pengecekan berkala setiap 5 detik
-    const revocationInterval = setInterval(checkRemoteRevocation, 5000);
+    // [OPTIMASI EGRESS]: Interval polling diperpanjang dari 5s ke 15s untuk mencegah lonjakan query database
+    const revocationInterval = setInterval(checkRemoteRevocation, 15000);
 
-    // Realtime subscription ke tabel user_sessions untuk respons seketika
+    // Realtime subscription ke tabel user_sessions untuk respons seketika saat admin merevoke sesi
     const channel = supabase
       .channel('manajemen-session-revocation-sync')
       .on(
@@ -204,12 +242,15 @@ export default function ManajemenLayout({ children }: { children: React.ReactNod
       supabase.removeChannel(channel);
     };
   }, [isAuthorized, router]);
-  // ==================================================================================================
+  // ======================================================================================
 
-  // Pengukur Latency Database Supabase
+  // Pengukur Latency Database Supabase dengan Proteksi Konkurensi (Egress Optimization)
   useEffect(() => {
     let latencyInterval: NodeJS.Timeout;
     const checkLatency = async () => {
+      if (isCheckingLatencyRef.current) return;
+      isCheckingLatencyRef.current = true;
+
       const start = performance.now();
       try {
         await supabase.from('users').select('id').limit(1);
@@ -217,6 +258,8 @@ export default function ManajemenLayout({ children }: { children: React.ReactNod
         setDbLatencyMs(Math.round(end - start));
       } catch {
         setDbLatencyMs(null);
+      } finally {
+        isCheckingLatencyRef.current = false;
       }
     };
 
@@ -282,6 +325,7 @@ export default function ManajemenLayout({ children }: { children: React.ReactNod
         }
         playAlertSound('lock');
         triggerToast('Layar Eksekutif Manajemen berhasil terkunci instan.');
+        ingestAuditLog('SCREEN_LOCKED', activeUserEmail, 'Screen locked via shortcut key.');
       }
 
       if (e.key === 'Escape' && showLogoutConfirm) {
@@ -291,7 +335,7 @@ export default function ManajemenLayout({ children }: { children: React.ReactNod
 
     window.addEventListener('keydown', handleKeyDownShortcuts);
     return () => window.removeEventListener('keydown', handleKeyDownShortcuts);
-  }, [triggerToast, playAlertSound, showLogoutConfirm]);
+  }, [triggerToast, playAlertSound, showLogoutConfirm, activeUserEmail]);
 
   // Event Listener Online/Offline & Activity Tracking
   useEffect(() => {
@@ -339,13 +383,13 @@ export default function ManajemenLayout({ children }: { children: React.ReactNod
           .from('users')
           .select('role')
           .eq('id', userId)
-          .single();
+          .maybeSingle();
 
         const { data: profileData } = await supabase
           .from('profiles')
           .select('role')
           .eq('id', userId)
-          .single();
+          .maybeSingle();
 
         const userRole = (userData?.role || profileData?.role || '').toLowerCase();
 
@@ -431,6 +475,7 @@ export default function ManajemenLayout({ children }: { children: React.ReactNod
 
             if (newAttempts >= 4) {
               setLockError('⚠️ Terlalu banyak percobaan salah. Akun dikunci 15 menit.');
+              ingestAuditLog('SECURITY_ACCOUNT_LOCKOUT', activeUserEmail, 'Account locked due to 4 consecutive failed unlock attempts.');
             } else {
               setLockError(`Kata sandi salah! Sisa percobaan: ${4 - newAttempts} kali.`);
             }
@@ -460,6 +505,7 @@ export default function ManajemenLayout({ children }: { children: React.ReactNod
         resetInactivityTimers();
         playAlertSound('success');
         triggerToast('Layar berhasil dibuka kembali.');
+        ingestAuditLog('SCREEN_UNLOCKED', activeUserEmail, 'Screen successfully unlocked.');
       }
     } catch {
       setLockError('Gagal memverifikasi kata sandi.');
@@ -550,6 +596,7 @@ export default function ManajemenLayout({ children }: { children: React.ReactNod
             }
             playAlertSound('lock');
             triggerToast('Layar Manajemen terkunci.');
+            ingestAuditLog('SCREEN_LOCKED', activeUserEmail, 'Screen locked via status bar button.');
           }}
           className="text-slate-400 hover:text-amber-400 transition flex items-center gap-1 cursor-pointer font-sans font-bold hover:underline"
           title="Kunci Layar Instan (Pintasan: Ctrl + L atau Alt + L)"

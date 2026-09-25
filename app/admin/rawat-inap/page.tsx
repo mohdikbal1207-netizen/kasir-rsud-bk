@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
   FileText, CheckCircle2, Clock, XCircle, Search, 
@@ -92,6 +92,10 @@ const terbilang = (nilai: number): string => {
 
 export default function AdminRanapPage() {
   const router = useRouter();
+  
+  // [OPTIMASI EGRESS & LOG INGESTION]: Ref AbortController untuk membatalkan query gantung/duplikat
+  const abortControllerRef = useRef<AbortController | null>(null);
+
   const [patientList, setPatientList] = useState<RanapHeader[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [searchTerm, setSearchTerm] = useState<string>('');
@@ -156,21 +160,61 @@ export default function AdminRanapPage() {
     };
   }, [showActionModal, showDetailModal]);
 
+  // [OPTIMASI EGRESS & LOG INGESTION]: Menerapkan Server-Side Filtering dan Selective Column Fetching
   const fetchRanapData = async () => {
+    // Batalkan request sebelumnya yang belum selesai untuk membersihkan log server
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     setLoading(true);
     try {
-      const { data: headers, error: headerErr } = await supabase
+      let query = supabase
         .from('ranap_billing_header')
         .select('*')
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .abortSignal(controller.signal);
 
+      // Pindahkan filter ke sisi server agar database hanya mengembalikan row yang relevan (Menekan Egress)
+      if (filterStatus !== 'ALL') {
+        query = query.eq('status_verifikasi', filterStatus);
+      }
+      if (filterPenjaminan !== 'ALL') {
+        query = query.ilike('jenis_penjaminan', `%${filterPenjaminan}%`);
+      }
+      if (filterRuang !== 'ALL') {
+        query = query.eq('ruang', filterRuang);
+      }
+      if (filterDokter !== 'ALL') {
+        query = query.eq('dokter_merawat', filterDokter);
+      }
+      if (startDate) {
+        query = query.gte('created_at', startDate);
+      }
+      if (endDate) {
+        const endDateTime = new Date(endDate);
+        endDateTime.setHours(23, 59, 59);
+        query = query.lte('created_at', endDateTime.toISOString());
+      }
+
+      const { data: headers, error: headerErr } = await query;
       if (headerErr) throw headerErr;
 
-      const { data: allItems, error: itemsErr } = await supabase
-        .from('ranap_billing_items')
-        .select('no_reg, jumlah_total, ditanggung_pihak3, selisih_bayar');
+      // Ambil item hanya untuk no_reg yang ada di headers saat ini (Menekan Egress tabel item)
+      const regNos = (headers || []).map((h: any) => h.no_reg);
+      let allItems: any[] = [];
+      if (regNos.length > 0) {
+        const { data: itemsData, error: itemsErr } = await supabase
+          .from('ranap_billing_items')
+          .select('no_reg, jumlah_total, ditanggung_pihak3, selisih_bayar')
+          .in('no_reg', regNos)
+          .abortSignal(controller.signal);
 
-      if (itemsErr) throw itemsErr;
+        if (itemsErr) throw itemsErr;
+        allItems = itemsData || [];
+      }
 
       if (headers) {
         const formatted = headers.map((h: any) => {
@@ -190,6 +234,10 @@ export default function AdminRanapPage() {
         setPatientList(formatted);
       }
     } catch (err: any) {
+      if (err.name === 'AbortError') {
+        console.log('Fetch dibatalkan untuk efisiensi jaringan.');
+        return;
+      }
       console.error('Gagal mengambil data ranap:', err?.message || JSON.stringify(err));
     } finally {
       setLoading(false);
@@ -198,7 +246,7 @@ export default function AdminRanapPage() {
 
   useEffect(() => {
     fetchRanapData();
-  }, []);
+  }, [filterStatus, filterPenjaminan, filterRuang, filterDokter, startDate, endDate]);
 
   const handleOpenDetail = async (patient: RanapHeader) => {
     setSelectedPatient(patient);
@@ -444,22 +492,7 @@ export default function AdminRanapPage() {
       p.ruang?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       p.dokter_merawat?.toLowerCase().includes(searchTerm.toLowerCase());
      
-    const matchesFilter = filterStatus === 'ALL' || (p.status_verifikasi || 'PENDING_VERIFIKASI') === filterStatus;
-    const matchesPenjaminan = filterPenjaminan === 'ALL' || (p.jenis_penjaminan || 'UMUM / MANDIRI').includes(filterPenjaminan);
-    const matchesRuang = filterRuang === 'ALL' || p.ruang === filterRuang;
-    const matchesDokter = filterDokter === 'ALL' || p.dokter_merawat === filterDokter;
-
-    let matchesDate = true;
-    if (startDate && p.created_at) {
-      matchesDate = matchesDate && new Date(p.created_at) >= new Date(startDate);
-    }
-    if (endDate && p.created_at) {
-      const endDateTime = new Date(endDate);
-      endDateTime.setHours(23, 59, 59);
-      matchesDate = matchesDate && new Date(p.created_at) <= endDateTime;
-    }
-
-    return matchesSearch && matchesFilter && matchesPenjaminan && matchesRuang && matchesDokter && matchesDate;
+    return matchesSearch;
   }).sort((a, b) => {
     if (sortBy === 'highest_cost') {
       return (b.total_biaya || 0) - (a.total_biaya || 0);
@@ -862,8 +895,8 @@ export default function AdminRanapPage() {
             <div className="flex items-center space-x-3">
               <span className="text-xs text-slate-500 font-medium">
                 Menampilkan <strong className="text-slate-800">{filteredPatients.length}</strong> data sesuai filter aktif.
-              </span>
-               
+            </span>
+              
               <div className="flex items-center space-x-1 text-xs text-slate-600">
                 <span>Baris:</span>
                 <select 
@@ -1068,7 +1101,7 @@ export default function AdminRanapPage() {
       {/* ========================================================= */}
       {printMode === 'summary' && (
         <div className="hidden print:block font-sans text-slate-900 text-[10px] m-0 p-0 space-y-2 w-full">
-          
+           
           <div className="flex items-center justify-between border-b-4 border-double border-slate-900 pb-2 mb-2 px-1">
             <div className="w-14 h-14 flex-shrink-0 flex items-center justify-center">
               <img src="/logo-pemkab.png" alt="Logo Pemkab Kerinci" className="w-12 h-12 object-contain" />
@@ -1152,7 +1185,7 @@ export default function AdminRanapPage() {
       {/* ========================================================= */}
       {printMode === 'selected_summary' && (
         <div className="hidden print:block font-sans text-slate-900 text-[10px] m-0 p-0 space-y-2 w-full">
-          
+           
           <div className="flex items-center justify-between border-b-4 border-double border-slate-900 pb-2 mb-2 px-1">
             <div className="w-14 h-14 flex-shrink-0 flex items-center justify-center">
               <img src="/logo-pemkab.png" alt="Logo Pemkab Kerinci" className="w-12 h-12 object-contain" />
@@ -1229,7 +1262,7 @@ export default function AdminRanapPage() {
       {/* ========================================================= */}
       {printMode === 'single_bill' && singlePrintData && (
         <div className="hidden print:block font-sans text-slate-900 text-[10px] m-0 p-0 space-y-2 w-full">
-          
+           
           <div className="flex items-center justify-between border-b-4 border-double border-slate-900 pb-2 mb-2 px-1">
             <div className="w-14 h-14 flex-shrink-0 flex items-center justify-center">
               <img src="/logo-pemkab.png" alt="Logo Pemkab Kerinci" className="w-12 h-12 object-contain" />
@@ -1350,7 +1383,7 @@ export default function AdminRanapPage() {
             </div>
 
             <div className="py-4 overflow-y-auto flex-1 space-y-4 print:hidden">
-              
+               
               <div className="bg-slate-900 p-4 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3 shadow-md">
                 <div className="flex items-center space-x-2 text-white">
                   <ShieldCheck className="w-5 h-5 text-emerald-400" />
@@ -1506,6 +1539,6 @@ export default function AdminRanapPage() {
         <AdminFooter />
       </div>
 
-    </div>
+  </div>
   );
 }

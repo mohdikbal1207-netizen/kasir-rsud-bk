@@ -17,11 +17,44 @@ const supabaseAdmin = createClient(
 
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-export async function POST(request: Request) {
+// Helper Ringkas untuk Log Ingestion & Egress Tracking (Aman & Bebas Bug .match)
+async function recordTelemetry(payload: {
+  adminId: string;
+  targetUserId: string;
+  action: string;
+  description: string;
+  clientIp: string;
+  userAgent: string;
+}) {
   try {
-    const clientIp = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || '127.0.0.1';
-    const userAgent = request.headers.get('user-agent') || 'Unknown Client';
+    await Promise.all([
+      supabaseAdmin.from('audit_logs').insert([{
+        admin_id: payload.adminId,
+        action: payload.action,
+        target_user_id: payload.targetUserId,
+        description: payload.description,
+        ip_address: payload.clientIp,
+        user_agent: payload.userAgent,
+        created_at: new Date().toISOString(),
+      }]),
+      supabaseAdmin.from('egress_metrics').insert([{
+        user_id: payload.adminId,
+        egress_type: 'ADMIN_FORCE_LOGOUT_EGRESS',
+        details: `Target User: ${payload.targetUserId} | Action: ${payload.action}`,
+        timestamp: new Date().toISOString(),
+      }]) // Sintaks .match() yang salah telah dihapus agar aman dari error runtime
+    ]);
+  } catch (err) {
+    // Non-blocking telemetry fallback: mencegah kegagalan log merusak fungsi utama
+    console.warn('Telemetry Recording Warning:', err);
+  }
+}
 
+export async function POST(request: Request) {
+  const clientIp = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || '127.0.0.1';
+  const userAgent = request.headers.get('user-agent') || 'Unknown Client';
+
+  try {
     let callerUser: any = null;
 
     const authHeader = request.headers.get('authorization');
@@ -143,21 +176,15 @@ export async function POST(request: Request) {
       console.warn('Peringatan: Gagal mencabut auth token via admin, namun sesi database telah ditutup.', authError.message);
     }
 
-    try {
-      await supabaseAdmin.from('audit_logs').insert([
-        {
-          admin_id: callerUser.id,
-          action: 'FORCE_LOGOUT_USER',
-          target_user_id: targetUserId,
-          description: `Admin ${callerUser.email} mengakhiri sesi secara paksa untuk staf ber-email ${targetUser.user.email || targetUserId}`,
-          ip_address: clientIp,
-          user_agent: userAgent,
-          created_at: new Date().toISOString(),
-        }
-      ]);
-    } catch (auditErr) {
-      console.info('Info: Tabel audit_logs belum tersedia untuk mencatat log.');
-    }
+    // Pencatatan Log Ingestion & Egress Telemetry secara efisien
+    await recordTelemetry({
+      adminId: callerUser.id,
+      targetUserId,
+      action: 'FORCE_LOGOUT_USER',
+      description: `Admin ${callerUser.email} mengakhiri sesi secara paksa untuk staf ber-email ${targetUser.user.email || targetUserId}`,
+      clientIp,
+      userAgent
+    });
 
     return NextResponse.json({ 
       success: true, 

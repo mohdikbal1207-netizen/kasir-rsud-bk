@@ -98,10 +98,10 @@ export default function MaintenanceControlPage() {
         }));
       }
 
-      // 2. Ambil Daftar Nomor Telepon dari Tabel 'users'
+      // 2. Ambil Daftar Nomor Telepon dari Tabel 'users' (Dioptimalkan: Hanya mengambil kolom yang diperlukan untuk menghemat Egress)
       const { data: usersData, error: usersError } = await supabase
         .from('users')
-        .select('*')
+        .select('id, nama, unit_kerja, no_telepon')
         .not('no_telepon', 'is', null);
 
       if (!usersError && usersData) {

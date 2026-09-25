@@ -68,6 +68,12 @@ export default function PusatCetakKasir() {
   const router = useRouter();
   const searchInputRef = useRef<HTMLInputElement>(null);
 
+  // [OPTIMASI EGRESS]: Ref untuk AbortController guna membatalkan request gantung/duplikat
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  // [OPTIMASI LOG INGESTION]: Ref Throttle untuk mencegah spam penulisan log ke server/database
+  const lastLogTimestampRef = useRef<{ [key: string]: number }>({});
+
   const [activeTab, setActiveTab] = useState<'RAJAL' | 'IGD' | 'RANAP' | 'OBAT'>('RAJAL');
   const [dataList, setDataList] = useState<KasirRecord[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -75,7 +81,7 @@ export default function PusatCetakKasir() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('SEMUA');
-  
+   
   // Filter & Centang Baris
   const [penjaminFilter, setPenjaminFilter] = useState<string>('SEMUA');
   const [petugasFilter, setPetugasFilter] = useState<string>('SEMUA');
@@ -113,6 +119,30 @@ export default function PusatCetakKasir() {
     setTimeout(() => setToastMessage(null), 4000);
   };
 
+  // === FUNGSI LOG INGESTION & EGRESS TRACKING DENGAN THROTTLE AMAN ===
+  const ingestAuditLog = useCallback(async (actionType: string, targetId: string, description: string) => {
+    try {
+      const logKey = `${actionType}_${targetId}`;
+      const now = Date.now();
+      const lastTime = lastLogTimestampRef.current[logKey] || 0;
+      
+      // Throttle 3 detik untuk mencegah lonjakan penulisan log berulang
+      if (now - lastTime < 3000) return;
+      lastLogTimestampRef.current[logKey] = now;
+
+      // Non-blocking background log transmission ke server
+      fetch('/api/kasir/audit-log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action_type: actionType, target_id: targetId, description, timestamp: new Date().toISOString() })
+      }).catch(() => {
+        // Fallback aman jika endpoint audit belum aktif sepenuhnya
+      });
+    } catch (err) {
+      console.warn('Audit Log Notice:', err);
+    }
+  }, []);
+
   // Deteksi Shift Aktif Berdasarkan Waktu Jam Sekarang
   const detectCurrentShift = useCallback(() => {
     const hour = new Date().getHours();
@@ -147,14 +177,20 @@ export default function PusatCetakKasir() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Fetch data dari API Backend Route sesuai tab aktif
+  // Fetch data dari API Backend Route sesuai tab aktif dengan AbortController
   const fetchKasirData = useCallback(async () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     setIsLoading(true);
     setErrorMessage(null);
     setSelectedIds([]); 
     setCurrentPage(1);
     try {
-      const response = await fetch(`/api/kasir/pusat-cetak?jenis_layanan=${activeTab}`);
+      const response = await fetch(`/api/kasir/pusat-cetak?jenis_layanan=${activeTab}`, { signal: controller.signal });
       const result = await response.json();
 
       if (result.success) {
@@ -227,7 +263,11 @@ export default function PusatCetakKasir() {
         setErrorMessage(result.error || 'Gagal memuat data dari server.');
         setDataList([]);
       }
-    } catch (err) {
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        console.log('Fetch kasir dibatalkan untuk efisiensi.');
+        return;
+      }
       console.error('Gagal mengambil data kasir via API:', err);
       setErrorMessage('Terjadi kesalahan jaringan atau server tidak merespons.');
     } finally {
@@ -297,6 +337,7 @@ export default function PusatCetakKasir() {
   const handleQuickMarkLunas = (id: string | number) => {
     setDataList(prev => prev.map(item => item.id === id ? { ...item, status: 'lunas' } : item));
     showToast(`Transaksi #${id} berhasil dilunasi secara instan.`);
+    ingestAuditLog('QUICK_PAY_LUNAS', String(id), `Transaction marked as paid instantly.`);
   };
 
   // Filter Data (Optimized with useMemo)
@@ -306,7 +347,7 @@ export default function PusatCetakKasir() {
         item.nama_pasien?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         item.no_rm?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         String(item.id).toLowerCase().includes(searchTerm.toLowerCase());
-       
+        
       let matchesStatus = true;
       if (statusFilter === 'LUNAS') {
         matchesStatus = !!(item.status?.toLowerCase().includes('lunas') || item.status?.toLowerCase().includes('verified'));
@@ -442,6 +483,8 @@ export default function PusatCetakKasir() {
       ...prev
     ]);
 
+    ingestAuditLog('PRINT_SINGLE_RECEIPT', String(record.id), `Printed ${layout} receipt for patient: ${record.nama_pasien}`);
+
     setTimeout(() => {
       window.print();
     }, 300);
@@ -467,6 +510,8 @@ export default function PusatCetakKasir() {
       },
       ...prev
     ]);
+
+    ingestAuditLog('PRINT_REKAP', activeTab, `Printed rekap report for ${activeTab}. Total records: ${filteredData.length}`);
 
     setTimeout(() => {
       window.print();
@@ -494,6 +539,8 @@ export default function PusatCetakKasir() {
       ...prev
     ]);
 
+    ingestAuditLog('PRINT_BATCH', 'MULTIPLE', `Printed batch report. Selected items count: ${selectedIds.length}`);
+
     setTimeout(() => {
       window.print();
     }, 300);
@@ -516,12 +563,14 @@ export default function PusatCetakKasir() {
       ...prev
     ]);
 
+    ingestAuditLog('PRINT_SHIFT_CLOSING', shiftFilter, `Printed shift closing reconciliation report.`);
+
     setTimeout(() => {
       window.print();
     }, 300);
   };
 
-  // Fitur Ekspor ke Format Excel Asli (.xls)
+  // Fitur Ekspor ke Format Excel Asli (.xls) dengan Audit Log Ingestion
   const handleExportExcel = () => {
     if (filteredData.length === 0) {
       setErrorMessage('Tidak ada data untuk diexport.');
@@ -585,6 +634,8 @@ export default function PusatCetakKasir() {
     link.click();
     document.body.removeChild(link);
     showToast('File Excel rekap berhasil diunduh.');
+
+    ingestAuditLog('EXPORT_EXCEL', activeTab, `Exported financial billing report to Excel. Total records: ${filteredData.length}`);
   };
 
   const batchSelectedData = useMemo(() => {

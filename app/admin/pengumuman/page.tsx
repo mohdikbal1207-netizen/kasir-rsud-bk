@@ -125,9 +125,10 @@ export default function AdminPengumumanPage() {
   const fetchAnnouncements = useCallback(async () => {
     setIsLoading(true);
     try {
+      // Dioptimalkan: Hanya mengambil kolom yang diperlukan untuk menghemat Egress & Log Ingestion
       const { data, error } = await supabase
         .from('pengumuman')
-        .select('*')
+        .select('id, nomor_pengumuman, judul, isi, kategori, prioritas, target_role, tanggal_mulai, tanggal_selesai, created_by, is_active, created_at')
         .order('created_at', { ascending: false });
 
       if (error) {

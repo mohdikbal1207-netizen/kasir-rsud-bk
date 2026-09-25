@@ -45,14 +45,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [lockError, setLockError] = useState<string>('');
   const [isCapsLockActive, setIsCapsLockActive] = useState<boolean>(false);
 
-  // Fitur Baru: Pelacak Durasi Waktu Sesi Aktif
+  // Pelacak Durasi Waktu Sesi Aktif
   const [sessionDurationMinutes, setSessionDurationMinutes] = useState<number>(0);
 
-  // Fitur Baru: Ping Realtime Latency Database & Confirm Logout Modal
+  // Ping Realtime Latency Database & Confirm Logout Modal
   const [dbLatencyMs, setDbLatencyMs] = useState<number | null>(null);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState<boolean>(false);
 
-  // Fitur Baru: Loading State khusus saat verifikasi pembukaan kunci layar
+  // Loading State khusus saat verifikasi pembukaan kunci layar
   const [isUnlocking, setIsUnlocking] = useState<boolean>(false);
   const [isChannelConnected, setIsChannelConnected] = useState<boolean>(false);
 
@@ -64,12 +64,63 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   // Ref untuk Cross-Tab Sync via BroadcastChannel
   const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
 
+  // === REFS UNTUK THROTTLE LOG & EGRESS (MENCEGAH TABEL BENGKAK / SPAM DATABASE) ===
+  const lastLogTimestampRef = useRef<{ [key: string]: number }>({});
+  const lastEgressTimestampRef = useRef<{ [key: string]: number }>({});
+
+  // === FITUR: LOG INGESTION & EGRESS TRACKING (DENGAN THROTTLE AMAN) ===
+  const ingestAuditLog = useCallback(async (actionType: string, description: string, severity: 'INFO' | 'WARN' | 'SECURITY' = 'INFO') => {
+    try {
+      if (!activeUserEmail) return;
+
+      // Logika Throttle: Cegah spam log yang sama dalam < 5 detik (Kecuali severity SECURITY)
+      const now = Date.now();
+      const lastTime = lastLogTimestampRef.current[actionType] || 0;
+      const throttleWindow = severity === 'SECURITY' ? 0 : 5000; 
+
+      if (throttleWindow > 0 && now - lastTime < throttleWindow) {
+        return; // Lewati jika terlalu sering dipanggil dalam waktu berdekatan
+      }
+      lastLogTimestampRef.current[actionType] = now;
+
+      await supabase.from('audit_logs').insert({
+        user_email: activeUserEmail,
+        role: activeUserRole,
+        action_type: actionType,
+        description: description,
+        severity: severity,
+        created_at: new Date().toISOString()
+      });
+    } catch (err) {
+      // Non-blocking fallback: tidak membuat aplikasi error jika tabel log belum tersedia di database
+      console.warn('Log Ingestion Warning:', err);
+    }
+  }, [activeUserEmail, activeUserRole]);
+
+  const trackEgressMetric = useCallback(async (egressType: string, details: string) => {
+    try {
+      // Throttle egress metrics minimal berjarak 5 detik untuk jenis yang sama
+      const now = Date.now();
+      const lastTime = lastEgressTimestampRef.current[egressType] || 0;
+      if (now - lastTime < 5000) return;
+      lastEgressTimestampRef.current[egressType] = now;
+
+      await supabase.from('egress_metrics').insert({
+        user_email: activeUserEmail || 'system_anonymous',
+        egress_type: egressType,
+        details: details,
+        timestamp: new Date().toISOString()
+      });
+    } catch {
+      // Abaikan error egress agar tidak mengganggu navigasi keluar pengguna
+    }
+  }, [activeUserEmail]);
+
   // Audio Alert System via Web Audio API
   const playAlertSound = useCallback((type: 'lock' | 'warning' | 'success' | 'click') => {
     try {
       if (typeof window === 'undefined') return;
       
-      // Aksesibilitas: Cek preferensi animasi/gerak pengguna
       const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
       if (prefersReducedMotion) return;
 
@@ -107,7 +158,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         osc.stop(ctx.currentTime + 0.05);
       }
     } catch {
-      // Abaikan autopolicy audio
+      // Abaikan policy audio
     }
   }, []);
 
@@ -120,6 +171,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   const handleAutoLogout = useCallback(async () => {
     try {
+      await trackEgressMetric('SESSION_LOGOUT_EGRESS', 'Admin session terminated via auto-logout or manual exit.');
+      await ingestAuditLog('AUTH_LOGOUT', 'User session ended successfully.', 'INFO');
+
       if (broadcastChannelRef.current) {
         broadcastChannelRef.current.postMessage('LOGOUT');
       }
@@ -129,7 +183,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     } catch {
       router.replace('/login');
     }
-  }, [router]);
+  }, [router, trackEgressMetric, ingestAuditLog]);
 
   const resetInactivityTimers = useCallback(async () => {
     if (warningTimerRef.current) clearTimeout(warningTimerRef.current);
@@ -158,7 +212,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     }, 30 * 60 * 1000);
   }, [handleAutoLogout, playAlertSound]);
 
-  // Fitur Baru: Pengukur Latency Koneksi Database Supabase
+  // Pengukur Latency Koneksi Database Supabase
   useEffect(() => {
     let latencyInterval: NodeJS.Timeout;
     const checkLatency = async () => {
@@ -182,7 +236,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     };
   }, [isAuthorized]);
 
-  // Fitur Baru: Broadcast Channel Sync Antar-Tab Browser & Status Indicator
+  // Broadcast Channel Sync Antar-Tab Browser & Egress Window Monitoring
   useEffect(() => {
     if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
       broadcastChannelRef.current = new BroadcastChannel('simrs_admin_session_channel');
@@ -199,12 +253,18 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       };
     }
 
+    const handleBeforeUnload = () => {
+      trackEgressMetric('WINDOW_UNLOAD_EGRESS', 'Admin tab or window closed.');
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
     return () => {
       if (broadcastChannelRef.current) {
         broadcastChannelRef.current.close();
       }
+      window.removeEventListener('beforeunload', handleBeforeUnload);
     };
-  }, [router]);
+  }, [router, trackEgressMetric]);
 
   // Pelacak Durasi Sesi Aktif Pengguna
   useEffect(() => {
@@ -226,7 +286,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   // Pintasan Keyboard Lengkap (Ctrl+L, Alt+L, dan ESC)
   useEffect(() => {
     const handleKeyDownShortcuts = (e: KeyboardEvent) => {
-      // Pintasan Kunci Layar: Ctrl+L atau Alt+L
       if ((e.ctrlKey || e.metaKey || e.altKey) && e.key.toLowerCase() === 'l') {
         e.preventDefault();
         setIsQuickLocked(true);
@@ -235,9 +294,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         }
         playAlertSound('lock');
         triggerToast('Layar Administrator berhasil terkunci instan.');
+        ingestAuditLog('SECURITY_LOCK_SCREEN', 'Admin screen locked via keyboard shortcut.', 'SECURITY');
       }
 
-      // Pintasan Tombol ESC untuk Menutup Modal Batal
       if (e.key === 'Escape') {
         if (showLogoutConfirm) {
           setShowLogoutConfirm(false);
@@ -247,7 +306,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
     window.addEventListener('keydown', handleKeyDownShortcuts);
     return () => window.removeEventListener('keydown', handleKeyDownShortcuts);
-  }, [triggerToast, playAlertSound, showLogoutConfirm]);
+  }, [triggerToast, playAlertSound, showLogoutConfirm, ingestAuditLog]);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -280,7 +339,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
     async function verifyAdminAccess() {
       try {
-        // 1. Ambil Sesi Supabase
         const { data: { session } } = await supabase.auth.getSession();
 
         if (!session?.user) {
@@ -293,17 +351,16 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
         if (isMounted) setActiveUserEmail(userEmail);
 
-        // Fail-safe mutlak khusus Email Super Admin Utama
         if (userEmail === 'mohdikbal1207@gmail.com') {
           if (isMounted) {
             setActiveUserRole('Super Administrator');
             setIsAuthorized(true);
             setIsLoading(false);
           }
+          await ingestAuditLog('AUTH_LOGIN_SUCCESS', 'Super Administrator access granted.', 'INFO');
           return;
         }
 
-        // 2. Pencarian Fleksibel berdasarkan ID dulu, lalu EMAIL
         let { data: userData } = await supabase
           .from('users')
           .select('role')
@@ -322,6 +379,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         const userRole = (userData?.role || '').toLowerCase().trim();
 
         if (userRole !== 'admin') {
+          await ingestAuditLog('AUTH_UNAUTHORIZED_BLOCKED', `Non-admin role (${userRole}) attempted access.`, 'SECURITY');
           await supabase.auth.signOut();
           if (isMounted) router.replace('/login');
           return;
@@ -332,6 +390,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           setIsAuthorized(true);
           setIsLoading(false);
         }
+        await ingestAuditLog('AUTH_LOGIN_SUCCESS', 'Administrator access granted.', 'INFO');
       } catch {
         if (isMounted) router.replace('/login');
       }
@@ -342,7 +401,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     return () => {
       isMounted = false;
     };
-  }, [router]);
+  }, [router, ingestAuditLog]);
 
   const handleUnlockScreen = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -358,6 +417,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       if (error) {
         setLockError('Kata sandi salah. Silakan coba lagi.');
         playAlertSound('warning');
+        await ingestAuditLog('SECURITY_UNLOCK_FAILED', 'Failed password verification during screen unlock.', 'SECURITY');
       } else {
         setIsQuickLocked(false);
         setLockPasswordInput('');
@@ -367,6 +427,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         resetInactivityTimers();
         playAlertSound('success');
         triggerToast('Layar berhasil dibuka kembali.');
+        await ingestAuditLog('SECURITY_UNLOCK_SUCCESS', 'Screen unlocked successfully.', 'INFO');
       }
     } catch {
       setLockError('Gagal memverifikasi kata sandi.');
@@ -428,6 +489,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
           <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
         </span>
+
         <span className="font-bold text-slate-200 flex items-center gap-1.5">
           <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" /> SIMRS Admin Node
         </span>
@@ -456,6 +518,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             }
             playAlertSound('lock');
             triggerToast('Layar Administrator terkunci.');
+            ingestAuditLog('SECURITY_LOCK_SCREEN', 'Admin screen locked via status bar button.', 'SECURITY');
           }}
           className="text-slate-400 hover:text-amber-400 transition flex items-center gap-1 cursor-pointer font-sans font-bold hover:underline"
           title="Kunci Layar Instan (Pintasan: Ctrl + L atau Alt + L)"

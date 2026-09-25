@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
   UserCheck, 
@@ -79,30 +79,30 @@ interface SystemUser {
 
 export default function AdminVerificationPage() {
   const [activeTab, setActiveTab] = useState<'pending' | 'active' | 'rejected'>('pending');
-  
+   
   const [pendingUsers, setPendingUsers] = useState<SystemUser[]>([]);
   const [activeUsers, setActiveUsers] = useState<SystemUser[]>([]);
   const [rejectedUsers, setRejectedUsers] = useState<SystemUser[]>([]);
-  
+   
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [searchTerm, setSearchTerm] = useState<string>('');
-  
+   
   // State Filter & Sorting
   const [unitFilter, setUnitFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'name'>('newest');
-  
+   
   // State Aksi Massal (Bulk Actions)
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
   const [isBatchModalOpen, setIsBatchModalOpen] = useState<boolean>(false);
 
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  
+   
   // State untuk Modal Interaktif (Termasuk mode 'block' baru)
   const [modalMode, setModalMode] = useState<'approve' | 'reject' | 'reset' | 'preview' | 'detail' | 'edit' | 'block' | null>(null);
   const [selectedUser, setSelectedUser] = useState<SystemUser | null>(null);
   const [previewPhotoUrl, setPreviewPhotoUrl] = useState<string | null>(null);
-  
+   
   // State Input Form Modal (Approve & Reset)
   const [assignedRole, setAssignedRole] = useState<string>('kasir');
   const [newPassword, setNewPassword] = useState<string>('');
@@ -124,8 +124,50 @@ export default function AdminVerificationPage() {
 
   const router = useRouter();
 
-  // Fetch Data Berdasarkan Tab Aktif
+  // === REFS UNTUK OPTIMASI EGRESS & LOG INGESTION (MENCEGAH TABEL BENGKAK / SPAM DATABASE) ===
+  const lastLogTimestampRef = useRef<{ [key: string]: number }>({});
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const realtimeDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // === FITUR: LOG INGESTION & EGRESS TRACKING (DENGAN THROTTLE AMAN & NON-BLOCKING) ===
+  const ingestAuditLog = async (action: string, targetUserId: string, details: string) => {
+    try {
+      // Throttle Log: Cegah spam log yang sama untuk target user yang sama dalam < 3 detik
+      const logKey = `${action}_${targetUserId}`;
+      const now = Date.now();
+      const lastTime = lastLogTimestampRef.current[logKey] || 0;
+      const isSecurity = action.startsWith('SECURITY_');
+      const throttleWindow = isSecurity ? 0 : 3000;
+
+      if (throttleWindow > 0 && now - lastTime < throttleWindow) {
+        return; // Lewati jika terlalu sering dipanggil
+      }
+      lastLogTimestampRef.current[logKey] = now;
+
+      const { data: { session } } = await supabase.auth.getSession();
+      const adminEmail = session?.user?.email || 'system_admin';
+       
+      // Kirim asinkron tanpa memblokir thread UI utama
+      supabase.from('audit_logs').insert({
+        admin_email: adminEmail,
+        action_type: action,
+        target_user_id: targetUserId,
+        description: details,
+        timestamp: new Date().toISOString()
+      }).then(() => {}).catch(() => {});
+    } catch (err) {
+      console.warn('Log Ingestion Notice:', err);
+    }
+  };
+
+  // Fetch Data Berdasarkan Tab Aktif dengan AbortController (Mencegah Egress Gantung/Ganda)
   const fetchUsersData = useCallback(async () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     setIsLoading(true);
     setMessage(null);
     setSelectedUserIds([]);
@@ -185,6 +227,9 @@ export default function AdminVerificationPage() {
       else setRejectedUsers(combinedData);
 
     } catch (err: unknown) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        return; // Abaikan error abort
+      }
       if (err instanceof Error) {
         setMessage({ type: 'error', text: `Gagal memuat data: ${err.message}` });
       } else {
@@ -198,17 +243,23 @@ export default function AdminVerificationPage() {
   useEffect(() => {
     fetchUsersData();
 
+    // Debounced Realtime Listener untuk mencegah spam query database yang memicu lonjakan egress
+    const handleRealtimeChange = () => {
+      if (realtimeDebounceTimerRef.current) clearTimeout(realtimeDebounceTimerRef.current);
+      realtimeDebounceTimerRef.current = setTimeout(() => {
+        fetchUsersData();
+      }, 1200);
+    };
+
     const channel = supabase
       .channel('admin-verification-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, () => {
-        fetchUsersData();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => {
-        fetchUsersData();
-      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, handleRealtimeChange)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, handleRealtimeChange)
       .subscribe();
 
     return () => {
+      if (realtimeDebounceTimerRef.current) clearTimeout(realtimeDebounceTimerRef.current);
+      if (abortControllerRef.current) abortControllerRef.current.abort();
       supabase.removeChannel(channel);
     };
   }, [fetchUsersData]);
@@ -222,17 +273,21 @@ export default function AdminVerificationPage() {
     return cleaned;
   };
 
+  // Egress API Call dengan Logging Aman & Non-blocking
   const sendWhatsAppNotification = async (phone: string, textMessage: string) => {
     const formattedPhone = formatPhoneForWA(phone);
     if (!formattedPhone) return;
     try {
-      await fetch('/api/whatsapp/send', {
+      fetch('/api/whatsapp/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: formattedPhone, message: textMessage })
-      });
+      }).catch(() => {});
+      
+      await ingestAuditLog('EGRESS_WHATSAPP_SENT', formattedPhone, 'Outbound WhatsApp notification sent successfully.');
     } catch (err) {
       console.error('Gagal mengirim WhatsApp Gateway:', err);
+      await ingestAuditLog('EGRESS_WHATSAPP_FAILED', formattedPhone, `Failed to send WhatsApp message.`);
     }
   };
 
@@ -304,7 +359,7 @@ export default function AdminVerificationPage() {
         .from('users')
         .update({
           is_active: false,
-          lockout_until: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // Blokir 24 jam / permanen
+          lockout_until: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
           failed_attempts: 5
         })
         .eq('id', selectedUser.id);
@@ -313,11 +368,13 @@ export default function AdminVerificationPage() {
 
       const phone = selectedUser.profiles?.no_telepon || selectedUser.no_telepon;
       const namaStaf = selectedUser.profiles?.nama_lengkap || selectedUser.nama_lengkap || 'Staf';
-      
+       
       if (phone) {
         const waMessage = `[RSUD BUKIT KERMAN - SECURITY ALERT]\nHalo ${namaStaf},\n\n${adminNote}`;
         await sendWhatsAppNotification(phone, waMessage);
       }
+
+      await ingestAuditLog('SECURITY_BLOCK_USER', selectedUser.id, `User account emergency blocked for: ${namaStaf}`);
 
       setMessage({ type: 'success', text: `Akses akun "${namaStaf}" berhasil diblokir darurat & notifikasi WA terkirim.` });
       setModalMode(null);
@@ -357,6 +414,8 @@ export default function AdminVerificationPage() {
         const waMessage = `[RSUD BUKIT KERMAN - SIMRS]\nHalo ${namaStaf},\n\nBlokir akses akun Anda telah dibuka oleh Administrator. Silakan login kembali ke sistem SIMRS.`;
         await sendWhatsAppNotification(phone, waMessage);
       }
+
+      await ingestAuditLog('SECURITY_UNBLOCK_USER', user.id, `User account unblocked for: ${namaStaf}`);
 
       setMessage({ type: 'success', text: `Akses akun "${namaStaf}" berhasil dibuka kembali.` });
       fetchUsersData();
@@ -407,6 +466,8 @@ export default function AdminVerificationPage() {
 
       if (profileError) throw profileError;
 
+      await ingestAuditLog('EDIT_USER_DATA', selectedUser.id, `Staff details updated for: ${editFormData.nama_lengkap}`);
+
       setMessage({ type: 'success', text: `Data pegawai "${editFormData.nama_lengkap}" berhasil diperbarui.` });
       setModalMode(null);
       fetchUsersData();
@@ -454,6 +515,8 @@ export default function AdminVerificationPage() {
         await sendWhatsAppNotification(phone, waMessage);
       }
 
+      await ingestAuditLog('APPROVE_USER_REGISTRATION', selectedUser.id, `User verified and activated with role: ${assignedRole.toUpperCase()}`);
+
       setMessage({ type: 'success', text: `Akun pegawai atas nama "${namaStaf}" berhasil disetujui & notifikasi WA terkirim.` });
       setPendingUsers((prev) => prev.filter((u) => u.id !== selectedUser.id));
       setRejectedUsers((prev) => prev.filter((u) => u.id !== selectedUser.id));
@@ -489,8 +552,10 @@ export default function AdminVerificationPage() {
       await supabase.from('users').update({ is_active: false, role: 'rejected', unit_kerja: `DITOLAK: ${adminNote}` }).eq('id', selectedUser.id);
       await supabase.from('profiles').update({ unit_kerja: `DITOLAK: ${adminNote}` }).eq('id', selectedUser.id);
 
+      await ingestAuditLog('REJECT_USER_REGISTRATION', selectedUser.id, `User registration rejected with note: ${adminNote}`);
+
       setMessage({ type: 'success', text: `Pendaftaran atas nama "${namaStaf}" dipindahkan ke Riwayat Ditolak & notifikasi WA terkirim.` });
-      
+       
       setPendingUsers((prev) => prev.filter((u) => u.id !== selectedUser.id));
       setActiveUsers((prev) => prev.filter((u) => u.id !== selectedUser.id));
       setModalMode(null);
@@ -525,6 +590,8 @@ export default function AdminVerificationPage() {
 
       if (profileError) throw profileError;
 
+      await ingestAuditLog('RESTORE_USER_ACCOUNT', user.id, 'User registration restored to pending queue.');
+
       setMessage({ type: 'success', text: `Akun atas nama "${user.profiles?.nama_lengkap || user.nama_lengkap || 'Staf'}" berhasil dipulihkan ke daftar Pending.` });
       fetchUsersData();
     } catch (err: unknown) {
@@ -544,6 +611,8 @@ export default function AdminVerificationPage() {
       await supabase.from('profiles').delete().eq('id', user.id);
       const { error } = await supabase.from('users').delete().eq('id', user.id);
       if (error) throw error;
+
+      await ingestAuditLog('DELETE_USER_PERMANENT', user.id, `User permanently deleted from database: ${name}`);
 
       setMessage({ type: 'success', text: 'Data riwayat penolakan berhasil dihapus permanen.' });
       setRejectedUsers((prev) => prev.filter((u) => u.id !== user.id));
@@ -594,6 +663,8 @@ export default function AdminVerificationPage() {
         await sendWhatsAppNotification(phone, waMessage);
       }
 
+      await ingestAuditLog('EGRESS_RESET_PASSWORD', selectedUser.id, `Password reset performed via administrative API for: ${namaStaf}`);
+
       setMessage({ type: 'success', text: `Kata sandi untuk "${namaStaf}" berhasil diatur ulang & notifikasi WA terkirim.` });
       setModalMode(null);
     } catch (err: unknown) {
@@ -630,6 +701,7 @@ export default function AdminVerificationPage() {
       for (const id of selectedUserIds) {
         await supabase.from('users').update({ is_active: true, role: 'kasir', unit_kerja: 'KASIR' }).eq('id', id);
         await supabase.from('profiles').update({ unit_kerja: 'KASIR' }).eq('id', id);
+        await ingestAuditLog('BATCH_APPROVE_USER', id, 'User approved via batch administrative action.');
       }
       setMessage({ type: 'success', text: `Berhasil menyetujui ${selectedUserIds.length} akun staf secara massal.` });
       setSelectedUserIds([]);
@@ -644,7 +716,8 @@ export default function AdminVerificationPage() {
     }
   };
 
-  const exportToCSV = () => {
+  // Data Egress Tracking (Ekspor Laporan)
+  const exportToCSV = async () => {
     const headers = ['Nama Lengkap', 'Email', 'NIK', 'NIP', 'Unit Kerja / Role', 'No Telepon', 'Status Akun', 'Tanggal Daftar'];
     const rows = filteredUsers.map((u) => [
       `"${u.profiles?.nama_lengkap || u.nama_lengkap || '-'}"`,
@@ -665,16 +738,19 @@ export default function AdminVerificationPage() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+
+    // Ingest Egress Log for Data Export
+    await ingestAuditLog('DATA_EGRESS_CSV_EXPORT', 'SYSTEM_BULK', `User data exported as CSV for tab: ${activeTab}, total records: ${filteredUsers.length}`);
   };
 
   const currentList = activeTab === 'pending' ? pendingUsers : activeTab === 'active' ? activeUsers : rejectedUsers;
-  
+   
   const filteredUsers = currentList.filter((item) => {
     const query = searchTerm.toLowerCase();
     const name = (item.profiles?.nama_lengkap || item.nama_lengkap || '').toLowerCase();
     const unit = (item.profiles?.unit_kerja || item.unit_kerja || item.role || '').toLowerCase();
     const email = (item.email || '').toLowerCase();
-    
+     
     const matchesSearch = name.includes(query) || unit.includes(query) || email.includes(query);
     const matchesUnit = unitFilter === 'all' || unit.includes(unitFilter.toLowerCase());
 
@@ -693,7 +769,7 @@ export default function AdminVerificationPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col justify-between selection:bg-emerald-500 selection:text-white relative overflow-hidden">
-      
+        
       <div className="absolute top-0 left-1/4 w-[600px] h-[600px] bg-emerald-200/40 rounded-full blur-[140px] pointer-events-none -z-10"></div>
       <div className="absolute bottom-1/4 right-10 w-[500px] h-[500px] bg-teal-200/30 rounded-full blur-[120px] pointer-events-none -z-10"></div>
 
@@ -706,7 +782,7 @@ export default function AdminVerificationPage() {
       />
 
       <main className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-8 flex-1 space-y-6 relative z-10 pb-24">
-        
+         
         <div className="bg-white/90 border border-slate-200/80 rounded-3xl p-6 shadow-xl shadow-slate-200/50 backdrop-blur-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <div className="space-y-1.5">
             <div className="inline-flex items-center space-x-2 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-xl text-emerald-700 text-xs font-bold">
@@ -721,7 +797,7 @@ export default function AdminVerificationPage() {
               </span>
             </div>
             <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
-              Verifikasi & Riwayat Akun Staf
+              Verifikasi &amp; Riwayat Akun Staf
             </h1>
             <p className="text-xs text-slate-500">
               Tinjau pendaftaran baru, kelola staf aktif, atau pantau riwayat pendaftaran yang ditolak.
@@ -940,9 +1016,9 @@ export default function AdminVerificationPage() {
                       <span className="text-[11px] text-slate-400 font-mono">
                         {item.created_at ? new Date(item.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : ''}
                       </span>
-                  </div>
+                    </div>
 
-                  <div className="flex items-center space-x-3.5">
+                    <div className="flex items-center space-x-3.5">
                       <div 
                         onClick={() => userPhotoUrl && openPhotoPreview(userPhotoUrl)}
                         className={`w-14 h-14 rounded-2xl bg-slate-100 border border-slate-200 overflow-hidden flex items-center justify-center flex-shrink-0 shadow-inner relative group/foto ${userPhotoUrl ? 'cursor-pointer hover:border-emerald-500 transition' : ''}`}
@@ -953,7 +1029,7 @@ export default function AdminVerificationPage() {
                             <img src={userPhotoUrl} alt="Foto Staf" className="w-full h-full object-cover" />
                             <div className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover/foto:opacity-100 transition flex items-center justify-center text-white">
                               <Maximize2 className="w-4 h-4" />
-                          </div>
+                            </div>
                           </>
                         ) : (
                           <User className="w-6 h-6 text-slate-400" />
@@ -968,9 +1044,9 @@ export default function AdminVerificationPage() {
                           {unitKerja}
                         </p>
                       </div>
-                  </div>
+                    </div>
 
-                  <div className="bg-slate-50 border border-slate-200/70 rounded-2xl p-3.5 space-y-2 text-xs text-slate-600">
+                    <div className="bg-slate-50 border border-slate-200/70 rounded-2xl p-3.5 space-y-2 text-xs text-slate-600">
                       <div className="flex items-center justify-between truncate">
                         <div className="flex items-center space-x-2 truncate">
                           <Mail className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
@@ -1014,7 +1090,7 @@ export default function AdminVerificationPage() {
                     </div>
                   </div>
 
-                  {/* COMMAND BAR AKSI (DITAMBAHKAN TOMBOL BLOKIR DARURAT WA) */}
+                  {/* COMMAND BAR AKSI */}
                   <div className="pt-3 border-t border-slate-100 flex items-center gap-2">
                     {activeTab === 'pending' && (
                       <>
@@ -1053,7 +1129,7 @@ export default function AdminVerificationPage() {
                         >
                           <Trash2 className="w-4 h-4 text-rose-500" />
                         </button>
-                    </>
+                      </>
                     )}
 
                     {activeTab === 'active' && (
@@ -1129,8 +1205,8 @@ export default function AdminVerificationPage() {
                         </button>
                       </>
                     )}
+                  </div>
                 </div>
-              </div>
               );
             })}
           </div>
@@ -1138,14 +1214,14 @@ export default function AdminVerificationPage() {
 
       </main>
 
-      {/* MODAL BARU: BLOKIR DARURAT AKUN & KIRIM NOTIFIKASI WA */}
+      {/* MODAL: BLOKIR DARURAT AKUN & KIRIM NOTIFIKASI WA */}
       {modalMode === 'block' && selectedUser && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full p-6 space-y-4 animate-in fade-in zoom-in duration-200 border border-slate-100">
             <div className="flex items-center justify-between">
               <div className="inline-flex items-center space-x-2 bg-rose-50 text-rose-700 px-3 py-1 rounded-xl text-xs font-bold">
                 <ShieldAlert className="w-4 h-4 text-rose-600" />
-                <span>Blokir Darurat & Notifikasi WhatsApp</span>
+                <span>Blokir Darurat &amp; Notifikasi WhatsApp</span>
               </div>
               <button onClick={() => setModalMode(null)} className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 transition cursor-pointer">
                 <X className="w-4 h-4" />
@@ -1179,7 +1255,7 @@ export default function AdminVerificationPage() {
                     <span>Memproses...</span>
                   </div>
                 ) : (
-                  <span>Blokir Akun & Kirim WA</span>
+                  <span>Blokir Akun &amp; Kirim WA</span>
                 )}
               </button>
             </div>
@@ -1187,7 +1263,7 @@ export default function AdminVerificationPage() {
         </div>
       )}
 
-      {/* MODAL BARU: EDIT DATA PEGAWAI */}
+      {/* MODAL: EDIT DATA PEGAWAI */}
       {modalMode === 'edit' && selectedUser && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full p-6 space-y-4 animate-in fade-in zoom-in duration-200 border border-slate-100 max-h-[90vh] overflow-y-auto">
@@ -1352,14 +1428,14 @@ export default function AdminVerificationPage() {
         </div>
       )}
 
-      {/* MODAL 1: PERSETUJUAN & CATATAN WA */}
+      {/* MODAL: PERSETUJUAN & CATATAN WA */}
       {modalMode === 'approve' && selectedUser && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full p-6 space-y-4 animate-in fade-in zoom-in duration-200 border border-slate-100">
             <div className="flex items-center justify-between">
               <div className="inline-flex items-center space-x-2 bg-emerald-50 text-emerald-700 px-3 py-1 rounded-xl text-xs font-bold">
                 <UserCheck className="w-4 h-4 text-emerald-600" />
-                <span>Persetujuan & Kirim WA Gateway</span>
+                <span>Persetujuan &amp; Kirim WA Gateway</span>
               </div>
               <button onClick={() => setModalMode(null)} className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 transition cursor-pointer">
                 <X className="w-4 h-4" />
@@ -1407,7 +1483,7 @@ export default function AdminVerificationPage() {
                     <span>Memproses...</span>
                   </div>
                 ) : (
-                  <span>Setujui & Kirim WA</span>
+                  <span>Setujui &amp; Kirim WA</span>
                 )}
               </button>
             </div>
@@ -1415,14 +1491,14 @@ export default function AdminVerificationPage() {
         </div>
       )}
 
-      {/* MODAL 2: PENOLAKAN & ALASAN WA */}
+      {/* MODAL: PENOLAKAN & ALASAN WA */}
       {modalMode === 'reject' && selectedUser && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full p-6 space-y-4 animate-in fade-in zoom-in duration-200 border border-slate-100">
             <div className="flex items-center justify-between">
               <div className="inline-flex items-center space-x-2 bg-rose-50 text-rose-700 px-3 py-1 rounded-xl text-xs font-bold">
                 <Ban className="w-4 h-4 text-rose-600" />
-                <span>Tolak Pendaftaran & Kirim WA</span>
+                <span>Tolak Pendaftaran &amp; Kirim WA</span>
               </div>
               <button onClick={() => setModalMode(null)} className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 transition cursor-pointer">
                 <X className="w-4 h-4" />
@@ -1456,7 +1532,7 @@ export default function AdminVerificationPage() {
                     <span>Memproses...</span>
                   </div>
                 ) : (
-                  <span>Tolak & Kirim WA</span>
+                  <span>Tolak &amp; Kirim WA</span>
                 )}
               </button>
             </div>
@@ -1464,14 +1540,14 @@ export default function AdminVerificationPage() {
         </div>
       )}
 
-      {/* MODAL 3: RESET PASSWORD & NOTIF WA */}
+      {/* MODAL: RESET PASSWORD & NOTIF WA */}
       {modalMode === 'reset' && selectedUser && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full p-6 space-y-4 animate-in fade-in zoom-in duration-200 border border-slate-100">
             <div className="flex items-center justify-between">
               <div className="inline-flex items-center space-x-2 bg-amber-50 text-amber-700 px-3 py-1 rounded-xl text-xs font-bold">
                 <ShieldAlert className="w-4 h-4 text-amber-600" />
-                <span>Atur Ulang Sandi & Kirim WA</span>
+                <span>Atur Ulang Sandi &amp; Kirim WA</span>
               </div>
               <button onClick={() => setModalMode(null)} className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 transition cursor-pointer">
                 <X className="w-4 h-4" />
@@ -1524,7 +1600,7 @@ export default function AdminVerificationPage() {
                     <span>Memproses...</span>
                   </div>
                 ) : (
-                  <span>Perbarui & Kirim WA</span>
+                  <span>Perbarui &amp; Kirim WA</span>
                 )}
               </button>
             </div>
@@ -1532,7 +1608,7 @@ export default function AdminVerificationPage() {
         </div>
       )}
 
-      {/* MODAL 4: PRATINJAU FOTO */}
+      {/* MODAL: PRATINJAU FOTO */}
       {modalMode === 'preview' && previewPhotoUrl && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full p-4 space-y-4 animate-in fade-in zoom-in duration-200 border border-slate-100 text-center relative">
@@ -1559,7 +1635,7 @@ export default function AdminVerificationPage() {
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="inline-flex items-center space-x-2 bg-emerald-50 text-emerald-700 px-3 py-1 rounded-xl text-xs font-bold">
                 <FileText className="w-4 h-4 text-emerald-600" />
-                <span>Rincian & Berkas Pendukung Pendaftaran</span>
+                <span>Rincian &amp; Berkas Pendukung Pendaftaran</span>
               </div>
               <button onClick={() => setModalMode(null)} className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 transition cursor-pointer">
                 <X className="w-4 h-4" />
@@ -1605,7 +1681,7 @@ export default function AdminVerificationPage() {
               </div>
 
               <div className="bg-slate-50 p-4 rounded-2xl space-y-2 border border-slate-200/60">
-                <h3 className="font-bold text-slate-900 border-b border-slate-200 pb-1">Kontak & Keamanan</h3>
+                <h3 className="font-bold text-slate-900 border-b border-slate-200 pb-1">Kontak &amp; Keamanan</h3>
                 <p><strong>Email:</strong> {selectedUser.email || '-'}</p>
                 <p><strong>WhatsApp:</strong> {selectedUser.no_telepon || selectedUser.profiles?.no_telepon || '-'}</p>
                 <p><strong>Tanggal Daftar:</strong> {selectedUser.created_at ? new Date(selectedUser.created_at).toLocaleString('id-ID') : '-'}</p>
