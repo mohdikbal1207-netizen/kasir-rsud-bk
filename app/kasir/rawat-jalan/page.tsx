@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import * as XLSX from 'xlsx';
 import { 
   Stethoscope, 
   Plus, 
@@ -58,6 +59,7 @@ interface TransaksiRajal {
   petugas_input_nip?: string;
   ttd_petugas_url?: string;
   rincian_layanan?: any;
+  jenis_layanan?: string;
 }
 
 export default function KasirRawatJalanPage() {
@@ -141,13 +143,15 @@ export default function KasirRawatJalanPage() {
     return cleaned ? parseInt(cleaned, 10) : 0;
   };
 
+  // OPTIMASI: Menggunakan .limit(500) untuk mencegah lonjakan Egress & Log Bloating
   const fetchRiwayat = useCallback(async () => {
     setIsLoading(true);
     try {
       const { data, error } = await supabase
         .from('transaksi_pasien')
         .select('*')
-        .order('tanggal_transaksi', { ascending: false });
+        .order('tanggal_transaksi', { ascending: false })
+        .limit(500);
 
       if (!error && data) {
         const filtered = data.filter(item => 
@@ -227,6 +231,7 @@ export default function KasirRawatJalanPage() {
     initOperatorAndData();
     fetchRiwayat();
 
+    // OPTIMASI REALTIME: Mencegah spam listener berlebih
     const channel = supabase
       .channel('realtime_transaksi_rajal')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'transaksi_pasien' }, () => {
@@ -511,34 +516,63 @@ export default function KasirRawatJalanPage() {
     }
   };
 
-  // Export Data ke CSV/Excel
-  const handleExportCSV = () => {
+  // FITUR BARU: Export Data ke Excel (.xlsx) dengan Format Resmi & Rapi
+  const handleExportExcel = () => {
     const listToExport = selectedTxIds.length > 0 ? selectedTransactions : filteredTransactions;
-    if (listToExport.length === 0) return;
+    if (listToExport.length === 0) {
+      alert('Tidak ada data untuk diexport.');
+      return;
+    }
 
-    const headers = ['ID Transaksi', 'No RM', 'Nama Pasien', 'NIK', 'Poli Tujuan', 'Penjaminan', 'Metode Bayar', 'Tanggal', 'Total Biaya (Rp)', 'Status', 'Catatan Admin'];
-    const rows = listToExport.map(t => [
-      t.id,
-      t.no_rm,
-      `"${t.nama_pasien}"`,
-      `"${t.nik || '-'}"`,
-      `"${t.poli_tujuan}"`,
-      t.jenis_penjaminan || 'UMUM',
-      t.metode_pembayaran || 'Tunai',
-      new Date(t.tanggal_transaksi).toLocaleDateString('id-ID'),
-      t.total_biaya,
-      t.status_bayar,
-      `"${t.catatan_admin || '-'}"`
-    ]);
+    const excelData = listToExport.map((t, idx) => {
+      let rincian: any = {};
+      try {
+        rincian = typeof t.rincian_layanan === 'string' ? JSON.parse(t.rincian_layanan) : t.rincian_layanan;
+      } catch {
+        rincian = {};
+      }
 
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `Laporan_Kasir_Rajal_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+      return {
+        'NO': idx + 1,
+        'ID TRANSAKSI': t.id,
+        'NO. RM': t.no_rm,
+        'NAMA PASIEN': t.nama_pasien,
+        'NIK': t.nik || '-',
+        'UMUR': rincian?.umur || '-',
+        'POLI TUJUAN': t.poli_tujuan,
+        'PENJAMINAN': t.jenis_penjaminan || 'UMUM',
+        'METODE PEMBAYARAN': t.metode_pembayaran || 'Tunai',
+        'TANGGAL': new Date(t.tanggal_transaksi).toLocaleDateString('id-ID'),
+        'TOTAL BIAYA (RP)': t.total_biaya,
+        'STATUS': t.status_bayar.toUpperCase(),
+        'PETUGAS INPUT': t.petugas_input_nama || '-',
+        'CATATAN ADMIN': t.catatan_admin || '-'
+      };
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(excelData);
+
+    // Styling Lebar Kolom Otomatis
+    worksheet['!cols'] = [
+      { wch: 5 },  // NO
+      { wch: 18 }, // ID TRANSAKSI
+      { wch: 12 }, // NO. RM
+      { wch: 25 }, // NAMA PASIEN
+      { wch: 18 }, // NIK
+      { wch: 10 }, // UMUR
+      { wch: 22 }, // POLI TUJUAN
+      { wch: 15 }, // PENJAMINAN
+      { wch: 18 }, // METODE PEMBAYARAN
+      { wch: 12 }, // TANGGAL
+      { wch: 18 }, // TOTAL BIAYA
+      { wch: 12 }, // STATUS
+      { wch: 20 }, // PETUGAS INPUT
+      { wch: 25 }  // CATATAN ADMIN
+    ];
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Rekap Rawat Jalan');
+    XLSX.writeFile(workbook, `Laporan_Kasir_RawatJalan_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   // Submit Transaksi Baru ke Supabase
@@ -1195,19 +1229,19 @@ export default function KasirRawatJalanPage() {
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
-                    </td>
-                    <td className="p-2 text-right">
-                      <input 
-                        type="text"
-                        placeholder="Biaya"
-                        value={formatNumberInput(item.biaya)}
-                        onChange={e => {
-                          const updated = [...penunjangLainnyaList];
-                          updated[idx].biaya = parseNumberInput(e.target.value);
-                          setPenunjangLainnyaList(updated);
-                        }}
-                        className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2 text-right font-mono font-bold focus:outline-none"
-                      />
+                  </td>
+                  <td className="p-2 text-right">
+                    <input 
+                      type="text"
+                      placeholder="Biaya"
+                      value={formatNumberInput(item.biaya)}
+                      onChange={e => {
+                        const updated = [...penunjangLainnyaList];
+                        updated[idx].biaya = parseNumberInput(e.target.value);
+                        setPenunjangLainnyaList(updated);
+                      }}
+                      className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2 text-right font-mono font-bold focus:outline-none"
+                    />
                   </td>
                 </tr>
               ))}
@@ -1217,324 +1251,324 @@ export default function KasirRawatJalanPage() {
                 <td colSpan={2} className="p-4 text-right text-emerald-900 text-sm uppercase">TOTAL BIAYA RAWAT JALAN:</td>
                 <td className="p-4 text-right text-emerald-800 text-base font-mono">{formatRupiah(hitungTotal())}</td>
               </tr>
-            </tbody>
-          </table>
+          </tbody>
+        </table>
+      </div>
+
+      {/* KALKULATOR UANG DITERIMA & KEMBALIAN */}
+      <div className="bg-emerald-900 text-white p-4 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4 text-xs">
+        <div className="flex items-center space-x-2">
+          <Banknote className="w-5 h-5 text-emerald-300" />
+          <div>
+            <span className="font-bold uppercase tracking-wider">Kalkulator Kasir Tunai</span>
+            <p className="text-[10px] text-slate-300">Masukkan uang tunai dari pasien untuk menghitung kembalian otomatis</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3 w-full sm:w-auto">
+          <div className="space-y-1 flex-1">
+            <label className="text-[10px] text-emerald-200 font-semibold">Uang Tunai Diterima (Rp)</label>
+            <input
+              type="text"
+              value={formatNumberInput(uangDiterima)}
+              onChange={e => setUangDiterima(parseNumberInput(e.target.value))}
+              placeholder="0"
+              className="bg-emerald-950 border border-emerald-700 text-white rounded-xl px-3 py-2 text-right font-mono font-bold w-36 sm:w-44 focus:outline-none"
+            />
+          </div>
+          <div className="space-y-1 flex-1">
+            <label className="text-[10px] text-emerald-200 font-semibold">Uang Kembalian</label>
+            <div className="bg-emerald-950 border border-emerald-700 text-emerald-300 rounded-xl px-3 py-2 text-right font-mono font-bold text-sm">
+              {uangDiterima >= hitungTotal() ? formatRupiah(uangDiterima - hitungTotal()) : 'Rp 0'}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* SEKSI AKHIR: Operator & TTD */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-slate-50 border border-slate-200/80 p-6 rounded-2xl text-xs">
+        <div className="space-y-3">
+          <div className="flex items-center space-x-2 text-slate-800 font-bold border-b border-slate-200 pb-2">
+            <User className="w-4 h-4 text-emerald-600" />
+            <span>Petugas Penginput Data (Penanggung Jawab)</span>
+          </div>
+          <div className="space-y-1.5 font-medium text-slate-700">
+            <p><span className="text-slate-400">Nama Petugas:</span> <strong className="text-slate-900">{petugasInfo.nama}</strong></p>
+            <p><span className="text-slate-400 font-mono">NIP / ID:</span> <strong className="font-mono text-slate-900">{petugasInfo.nip}</strong></p>
+            <p><span className="text-slate-400">Status Akses:</span> <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-md font-bold text-[10px]">VERIFIED KASIR</span></p>
+          </div>
         </div>
 
-        {/* KALKULATOR UANG DITERIMA & KEMBALIAN */}
-        <div className="bg-emerald-900 text-white p-4 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4 text-xs">
+        {/* Pad TTD */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+            <span className="font-bold text-slate-800">Tanda Tangan Petugas Penginput</span>
+            <button 
+              type="button" 
+              onClick={clearCanvas}
+              className="text-[10px] text-rose-600 font-bold hover:underline flex items-center space-x-1"
+            >
+              <Eraser className="w-3 h-3" />
+              <span>Bersihkan TTD</span>
+            </button>
+          </div>
+          
+          <div className="border-2 border-dashed border-slate-300 rounded-xl bg-white overflow-hidden relative">
+            <canvas 
+              ref={canvasRef}
+              width={380}
+              height={110}
+              onMouseDown={startDrawing}
+              onMouseMove={draw}
+              onMouseUp={stopDrawing}
+              onMouseLeave={stopDrawing}
+              onTouchStart={startDrawing}
+              onTouchMove={draw}
+              onTouchEnd={stopDrawing}
+              className="w-full h-28 cursor-crosshair touch-none"
+            />
+            {!hasSignature && (
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none text-slate-300 text-[11px] font-medium">
+                Goreskan tanda tangan petugas di sini
+            </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-col sm:flex-row gap-3">
+        <button
+          type="button"
+          onClick={resetForm}
+          className="px-5 py-3.5 rounded-2xl border border-slate-300 text-slate-700 hover:bg-slate-100 font-bold text-xs transition flex items-center justify-center space-x-2 cursor-pointer"
+        >
+          <RotateCcw className="w-4 h-4" />
+          <span>Reset Form</span>
+        </button>
+          
+        <button
+          id="btn-simpan-transaksi"
+          type="submit"
+          disabled={isLoading}
+          className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-2xl shadow-lg shadow-emerald-600/30 transition cursor-pointer flex items-center justify-center space-x-2"
+        >
+          <DollarSign className="w-5 h-5" />
+          <span>Simpan &amp; Cetak Perincian Pasien Ini (Ctrl+S)</span>
+        </button>
+      </div>
+    </form>
+  ) : (
+    /* TAB 2: DAFTAR RIWAYAT TAGIHAN */
+    <div className="space-y-6 print:hidden">
+        
+      {/* WIDGET AKUMULASI DENGAN REKONSILIASI KEUANGAN */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white p-5 rounded-3xl shadow-lg border border-slate-700 flex items-center justify-between">
+          <div className="space-y-1">
+            <span className="text-[11px] font-bold tracking-wider text-slate-400 uppercase flex items-center space-x-1.5">
+              <Users className="w-4 h-4 text-emerald-400" />
+              <span>Total Sesuai Filter ({activeFilteredTx.length} Pasien)</span>
+            </span>
+            <p className="text-xl font-black font-mono text-emerald-400 tracking-tight">
+              {formatRupiah(totalAllFiltered)}
+            </p>
+            <p className="text-[10px] text-slate-400">
+              Rincian aktif kasir
+            </p>
+          </div>
+        </div>
+
+        <div className="bg-gradient-to-br from-emerald-700 to-teal-800 text-white p-5 rounded-3xl shadow-lg border border-emerald-600 flex items-center justify-between">
+          <div className="space-y-1">
+            <span className="text-[11px] font-bold tracking-wider text-emerald-100 uppercase flex items-center space-x-1.5">
+              <CreditCard className="w-4 h-4 text-white" />
+              <span>Penerimaan Tunai / Cash</span>
+            </span>
+            <p className="text-xl font-black font-mono text-white tracking-tight">
+              {formatRupiah(totalTunaiFiltered)}
+            </p>
+            <p className="text-[10px] text-emerald-100">Fisik kasir di laci</p>
+          </div>
+        </div>
+
+        <div className="bg-gradient-to-br from-teal-800 to-cyan-900 text-white p-5 rounded-3xl shadow-lg border border-teal-700 flex items-center justify-between">
+          <div className="space-y-1">
+            <span className="text-[11px] font-bold tracking-wider text-teal-200 uppercase flex items-center space-x-1.5">
+              <DollarSign className="w-4 h-4 text-cyan-300" />
+              <span>Penerimaan Online / QRIS</span>
+            </span>
+            <p className="text-xl font-black font-mono text-cyan-300 tracking-tight">
+              {formatRupiah(totalOnlineFiltered)}
+            </p>
+            <p className="text-[10px] text-teal-200">Transfer / Rekening RSUD</p>
+          </div>
+        </div>
+      </div>
+
+      {/* CONTROL PANEL & FILTER MULTI KRITERIA */}
+      <div className="bg-white/90 border border-slate-200 rounded-3xl p-4 shadow-sm backdrop-blur-md space-y-3">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
           <div className="flex items-center space-x-2">
-            <Banknote className="w-5 h-5 text-emerald-300" />
-            <div>
-              <span className="font-bold uppercase tracking-wider">Kalkulator Kasir Tunai</span>
-              <p className="text-[10px] text-slate-300">Masukkan uang tunai dari pasien untuk menghitung kembalian otomatis</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3 w-full sm:w-auto">
-            <div className="space-y-1 flex-1">
-              <label className="text-[10px] text-emerald-200 font-semibold">Uang Tunai Diterima (Rp)</label>
-              <input
-                type="text"
-                value={formatNumberInput(uangDiterima)}
-                onChange={e => setUangDiterima(parseNumberInput(e.target.value))}
-                placeholder="0"
-                className="bg-emerald-950 border border-emerald-700 text-white rounded-xl px-3 py-2 text-right font-mono font-bold w-36 sm:w-44 focus:outline-none"
-              />
-            </div>
-            <div className="space-y-1 flex-1">
-              <label className="text-[10px] text-emerald-200 font-semibold">Uang Kembalian</label>
-              <div className="bg-emerald-950 border border-emerald-700 text-emerald-300 rounded-xl px-3 py-2 text-right font-mono font-bold text-sm">
-                {uangDiterima >= hitungTotal() ? formatRupiah(uangDiterima - hitungTotal()) : 'Rp 0'}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* SEKSI AKHIR: Operator & TTD */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-slate-50 border border-slate-200/80 p-6 rounded-2xl text-xs">
-          <div className="space-y-3">
-            <div className="flex items-center space-x-2 text-slate-800 font-bold border-b border-slate-200 pb-2">
-              <User className="w-4 h-4 text-emerald-600" />
-              <span>Petugas Penginput Data (Penanggung Jawab)</span>
-            </div>
-            <div className="space-y-1.5 font-medium text-slate-700">
-              <p><span className="text-slate-400">Nama Petugas:</span> <strong className="text-slate-900">{petugasInfo.nama}</strong></p>
-              <p><span className="text-slate-400 font-mono">NIP / ID:</span> <strong className="font-mono text-slate-900">{petugasInfo.nip}</strong></p>
-              <p><span className="text-slate-400">Status Akses:</span> <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-md font-bold text-[10px]">VERIFIED KASIR</span></p>
-            </div>
-          </div>
-
-          {/* Pad TTD */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-              <span className="font-bold text-slate-800">Tanda Tangan Petugas Penginput</span>
-              <button 
-                type="button" 
-                onClick={clearCanvas}
-                className="text-[10px] text-rose-600 font-bold hover:underline flex items-center space-x-1"
-              >
-                <Eraser className="w-3 h-3" />
-                <span>Bersihkan TTD</span>
-              </button>
-            </div>
-            
-            <div className="border-2 border-dashed border-slate-300 rounded-xl bg-white overflow-hidden relative">
-              <canvas 
-                ref={canvasRef}
-                width={380}
-                height={110}
-                onMouseDown={startDrawing}
-                onMouseMove={draw}
-                onMouseUp={stopDrawing}
-                onMouseLeave={stopDrawing}
-                onTouchStart={startDrawing}
-                onTouchMove={draw}
-                onTouchEnd={stopDrawing}
-                className="w-full h-28 cursor-crosshair touch-none"
-              />
-              {!hasSignature && (
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none text-slate-300 text-[11px] font-medium">
-                  Goreskan tanda tangan petugas di sini
-                </div>
+            <button
+              type="button"
+              onClick={handleSelectAllTx}
+              className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition flex items-center space-x-2 cursor-pointer border border-slate-300"
+            >
+              {selectedTxIds.length > 0 && selectedTxIds.length === filteredTransactions.length ? (
+                <CheckSquare className="w-4 h-4 text-emerald-600" />
+              ) : (
+                <Square className="w-4 h-4 text-slate-400" />
               )}
-            </div>
-          </div>
-        </div>
-
-        <div className="flex flex-col sm:flex-row gap-3">
-          <button
-            type="button"
-            onClick={resetForm}
-            className="px-5 py-3.5 rounded-2xl border border-slate-300 text-slate-700 hover:bg-slate-100 font-bold text-xs transition flex items-center justify-center space-x-2 cursor-pointer"
-          >
-            <RotateCcw className="w-4 h-4" />
-            <span>Reset Form</span>
-          </button>
-            
-          <button
-            id="btn-simpan-transaksi"
-            type="submit"
-            disabled={isLoading}
-            className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-2xl shadow-lg shadow-emerald-600/30 transition cursor-pointer flex items-center justify-center space-x-2"
-          >
-            <DollarSign className="w-5 h-5" />
-            <span>Simpan &amp; Cetak Perincian Pasien Ini (Ctrl+S)</span>
-          </button>
-        </div>
-      </form>
-      ) : (
-        /* TAB 2: DAFTAR RIWAYAT TAGIHAN */
-        <div className="space-y-6 print:hidden">
-            
-          {/* WIDGET AKUMULASI DENGAN REKONSILIASI KEUANGAN */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white p-5 rounded-3xl shadow-lg border border-slate-700 flex items-center justify-between">
-              <div className="space-y-1">
-                <span className="text-[11px] font-bold tracking-wider text-slate-400 uppercase flex items-center space-x-1.5">
-                  <Users className="w-4 h-4 text-emerald-400" />
-                  <span>Total Sesuai Filter ({activeFilteredTx.length} Pasien)</span>
-                </span>
-                <p className="text-xl font-black font-mono text-emerald-400 tracking-tight">
-                  {formatRupiah(totalAllFiltered)}
-                </p>
-                <p className="text-[10px] text-slate-400">
-                  Rincian aktif kasir
-                </p>
-              </div>
-            </div>
-
-            <div className="bg-gradient-to-br from-emerald-700 to-teal-800 text-white p-5 rounded-3xl shadow-lg border border-emerald-600 flex items-center justify-between">
-              <div className="space-y-1">
-                <span className="text-[11px] font-bold tracking-wider text-emerald-100 uppercase flex items-center space-x-1.5">
-                  <CreditCard className="w-4 h-4 text-white" />
-                  <span>Penerimaan Tunai / Cash</span>
-                </span>
-                <p className="text-xl font-black font-mono text-white tracking-tight">
-                  {formatRupiah(totalTunaiFiltered)}
-                </p>
-                <p className="text-[10px] text-emerald-100">Fisik kasir di laci</p>
-            </div>
-          </div>
-
-          <div className="bg-gradient-to-br from-teal-800 to-cyan-900 text-white p-5 rounded-3xl shadow-lg border border-teal-700 flex items-center justify-between">
-            <div className="space-y-1">
-              <span className="text-[11px] font-bold tracking-wider text-teal-200 uppercase flex items-center space-x-1.5">
-                <DollarSign className="w-4 h-4 text-cyan-300" />
-                <span>Penerimaan Online / QRIS</span>
+              <span>
+                {selectedTxIds.length > 0 && selectedTxIds.length === filteredTransactions.length
+                  ? 'Batal Pilih Semua'
+                  : `Pilih Semua (${filteredTransactions.length})`}
               </span>
-              <p className="text-xl font-black font-mono text-cyan-300 tracking-tight">
-                {formatRupiah(totalOnlineFiltered)}
-              </p>
-              <p className="text-[10px] text-teal-200">Transfer / Rekening RSUD</p>
-            </div>
+            </button>
+
+            {selectedTxIds.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setSelectedTxIds([])}
+                className="text-xs text-rose-600 font-bold hover:underline flex items-center space-x-1"
+              >
+                <XCircle className="w-3.5 h-3.5" />
+                <span>Bersihkan Pilihan</span>
+              </button>
+            )}
+          </div>
+
+          {/* TOMBOL AKSI: CETAK REKAP SEMUA & EKSPOR EXCEL */}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handlePrintAllRecap}
+              className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition flex items-center space-x-2 cursor-pointer shadow-sm"
+            >
+              <Printer className="w-4 h-4 text-emerald-400" />
+              <span>Cetak Rekap Semua ({filteredTransactions.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleExportExcel}
+              className="px-4 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-bold transition flex items-center space-x-2 cursor-pointer shrink-0 shadow-sm"
+            >
+              <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+              <span>Ekspor Excel (.xlsx) ({selectedTxIds.length > 0 ? selectedTxIds.length : filteredTransactions.length})</span>
+            </button>
           </div>
         </div>
 
-        {/* CONTROL PANEL & FILTER MULTI KRITERIA */}
-        <div className="bg-white/90 border border-slate-200 rounded-3xl p-4 shadow-sm backdrop-blur-md space-y-3">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-            <div className="flex items-center space-x-2">
-              <button
-                type="button"
-                onClick={handleSelectAllTx}
-                className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition flex items-center space-x-2 cursor-pointer border border-slate-300"
-              >
-                {selectedTxIds.length > 0 && selectedTxIds.length === filteredTransactions.length ? (
-                  <CheckSquare className="w-4 h-4 text-emerald-600" />
-                ) : (
-                  <Square className="w-4 h-4 text-slate-400" />
-                )}
-                <span>
-                  {selectedTxIds.length > 0 && selectedTxIds.length === filteredTransactions.length
-                    ? 'Batal Pilih Semua'
-                    : `Pilih Semua (${filteredTransactions.length})`}
-                </span>
-              </button>
-
-              {selectedTxIds.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setSelectedTxIds([])}
-                  className="text-xs text-rose-600 font-bold hover:underline flex items-center space-x-1"
-                >
-                  <XCircle className="w-3.5 h-3.5" />
-                  <span>Bersihkan Pilihan</span>
-                </button>
-              )}
-            </div>
-
-            {/* TOMBOL AKSI: CETAK REKAP SEMUA & EKSPOR EXCEL */}
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={handlePrintAllRecap}
-                className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition flex items-center space-x-2 cursor-pointer shadow-sm"
-              >
-                <Printer className="w-4 h-4 text-emerald-400" />
-                <span>Cetak Rekap Semua ({filteredTransactions.length})</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleExportCSV}
-                className="px-4 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-bold transition flex items-center space-x-2 cursor-pointer shrink-0"
-              >
-                <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
-                <span>Ekspor Excel ({selectedTxIds.length > 0 ? selectedTxIds.length : filteredTransactions.length})</span>
-              </button>
-            </div>
+        {/* Baris Filter Input */}
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-2 border-t border-slate-100">
+          <div className="relative sm:col-span-1">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input 
+              type="text" 
+              placeholder="Cari RM / Nama Pasien..." 
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-300 rounded-xl pl-9 pr-3 py-2 text-xs focus:outline-none"
+            />
           </div>
 
-          {/* Baris Filter Input */}
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-2 border-t border-slate-100">
-            <div className="relative sm:col-span-1">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input 
-                type="text" 
-                placeholder="Cari RM / Nama Pasien..." 
-                value={searchTerm}
-                onChange={e => setSearchTerm(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-300 rounded-xl pl-9 pr-3 py-2 text-xs focus:outline-none"
-              />
-            </div>
+          <div className="flex items-center space-x-2 bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5">
+            <Filter className="w-3.5 h-3.5 text-slate-400" />
+            <select
+              value={filterStatus}
+              onChange={e => setFilterStatus(e.target.value)}
+              className="bg-transparent text-xs font-semibold text-slate-700 w-full focus:outline-none"
+            >
+              <option value="ALL">Semua Status Bayar</option>
+              <option value="pending">Pending</option>
+              <option value="lunas">Lunas</option>
+              <option value="dibatalkan">Dibatalkan (Void)</option>
+            </select>
+          </div>
 
-            <div className="flex items-center space-x-2 bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5">
-              <Filter className="w-3.5 h-3.5 text-slate-400" />
-              <select
-                value={filterStatus}
-                onChange={e => setFilterStatus(e.target.value)}
-                className="bg-transparent text-xs font-semibold text-slate-700 w-full focus:outline-none"
-              >
-                <option value="ALL">Semua Status Bayar</option>
-                <option value="pending">Pending</option>
-                <option value="lunas">Lunas</option>
-                <option value="dibatalkan">Dibatalkan (Void)</option>
-              </select>
-            </div>
+          <div className="flex items-center space-x-2 bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5">
+            <CreditCard className="w-3.5 h-3.5 text-slate-400" />
+            <select
+              value={filterPenjaminan}
+              onChange={e => setFilterPenjaminan(e.target.value)}
+              className="bg-transparent text-xs font-semibold text-slate-700 w-full focus:outline-none"
+            >
+              <option value="ALL">Semua Penjaminan</option>
+              <option value="UMUM">UMUM / MANDIRI</option>
+              <option value="BPJS">BPJS KESEHATAN</option>
+            </select>
+          </div>
 
-            <div className="flex items-center space-x-2 bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5">
-              <CreditCard className="w-3.5 h-3.5 text-slate-400" />
-              <select
-                value={filterPenjaminan}
-                onChange={e => setFilterPenjaminan(e.target.value)}
-                className="bg-transparent text-xs font-semibold text-slate-700 w-full focus:outline-none"
-              >
-                <option value="ALL">Semua Penjaminan</option>
-                <option value="UMUM">UMUM / MANDIRI</option>
-                <option value="BPJS">BPJS KESEHATAN</option>
-              </select>
-            </div>
-
-            <div className="flex items-center space-x-2 bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5">
-              <Calendar className="w-3.5 h-3.5 text-slate-400" />
-              <input
-                type="date"
-                value={filterTanggal}
-                onChange={e => setFilterTanggal(e.target.value)}
-                className="bg-transparent text-xs font-semibold text-slate-700 w-full focus:outline-none"
-              />
-              {filterTanggal && (
-                <button type="button" onClick={() => setFilterTanggal('')} className="text-slate-400 hover:text-slate-600 text-xs font-bold">×</button>
-              )}
-            </div>
+          <div className="flex items-center space-x-2 bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5">
+            <Calendar className="w-3.5 h-3.5 text-slate-400" />
+            <input
+              type="date"
+              value={filterTanggal}
+              onChange={e => setFilterTanggal(e.target.value)}
+              className="bg-transparent text-xs font-semibold text-slate-700 w-full focus:outline-none"
+            />
+            {filterTanggal && (
+              <button type="button" onClick={() => setFilterTanggal('')} className="text-slate-400 hover:text-slate-600 text-xs font-bold">×</button>
+            )}
           </div>
         </div>
+      </div>
 
-        {/* KARTU TRANSAKSI PASIEN */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {filteredTransactions.map(tx => {
-            const isSelected = selectedTxIds.includes(tx.id);
-            const isLunas = tx.status_bayar === 'lunas';
-            const isDibatalkan = tx.status_bayar === 'dibatalkan';
+      {/* KARTU TRANSAKSI PASIEN */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {filteredTransactions.map(tx => {
+          const isSelected = selectedTxIds.includes(tx.id);
+          const isLunas = tx.status_bayar === 'lunas';
+          const isDibatalkan = tx.status_bayar === 'dibatalkan';
 
-            return (
-              <div 
-                key={tx.id} 
-                className={`bg-white border rounded-3xl p-6 shadow-sm space-y-4 flex flex-col justify-between transition ${
-                  isDibatalkan 
-                    ? 'border-rose-200 bg-rose-50/30'
-                    : isSelected 
-                      ? 'border-2 border-emerald-500 bg-emerald-50/20 shadow-md' 
-                      : 'border-slate-200 hover:border-slate-300'
-                }`}
-              >
-                <div className="space-y-3">
-                  <div className="flex justify-between items-start gap-2">
-                    <div className="flex items-center space-x-2">
+          return (
+            <div 
+              key={tx.id} 
+              className={`bg-white border rounded-3xl p-6 shadow-sm space-y-4 flex flex-col justify-between transition ${
+                isDibatalkan 
+                  ? 'border-rose-200 bg-rose-50/30'
+                  : isSelected 
+                    ? 'border-2 border-emerald-500 bg-emerald-50/20 shadow-md' 
+                    : 'border-slate-200 hover:border-slate-300'
+              }`}
+            >
+              <div className="space-y-3">
+                <div className="flex justify-between items-start gap-2">
+                  <div className="flex items-center space-x-2">
+                    <button
+                      type="button"
+                      onClick={() => handleToggleSelectTx(tx.id)}
+                      className="text-left cursor-pointer group"
+                    >
+                      {isSelected ? (
+                        <CheckSquare className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+                      ) : (
+                        <Square className="w-5 h-5 text-slate-300 group-hover:text-slate-400 flex-shrink-0" />
+                      )}
+                    </button>
+
+                    {/* Tombol Status Pembayaran */}
+                    {isDibatalkan ? (
+                      <span className="text-[10px] font-bold px-2.5 py-1 rounded-full uppercase bg-rose-100 text-rose-800 border border-rose-300 flex items-center space-x-1">
+                        <ShieldAlert className="w-3 h-3 text-rose-600" />
+                        <span>DIBATALKAN (VOID)</span>
+                      </span>
+                    ) : (
                       <button
                         type="button"
-                        onClick={() => handleToggleSelectTx(tx.id)}
-                        className="text-left cursor-pointer group"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleUpdateStatusBayar(tx.id, tx.status_bayar);
+                        }}
+                        title="Klik untuk mengubah status pembayaran"
+                        className={`text-[10px] font-bold px-2.5 py-1 rounded-full uppercase flex items-center space-x-1 transition cursor-pointer ${
+                          isLunas ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 hover:bg-emerald-200' : 'bg-amber-100 text-amber-800 border border-amber-300 hover:bg-amber-200'
+                        }`}
                       >
-                        {isSelected ? (
-                          <CheckSquare className="w-5 h-5 text-emerald-600 flex-shrink-0" />
-                        ) : (
-                          <Square className="w-5 h-5 text-slate-300 group-hover:text-slate-400 flex-shrink-0" />
-                        )}
+                        {isLunas ? <CheckCircle2 className="w-3 h-3 text-emerald-600" /> : <Clock className="w-3 h-3 text-amber-600" />}
+                      <span>{isLunas ? 'LUNAS' : 'PENDING'}</span>
                       </button>
-
-                      {/* Tombol Status Pembayaran */}
-                      {isDibatalkan ? (
-                        <span className="text-[10px] font-bold px-2.5 py-1 rounded-full uppercase bg-rose-100 text-rose-800 border border-rose-300 flex items-center space-x-1">
-                          <ShieldAlert className="w-3 h-3 text-rose-600" />
-                          <span>DIBATALKAN (VOID)</span>
-                        </span>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleUpdateStatusBayar(tx.id, tx.status_bayar);
-                          }}
-                          title="Klik untuk mengubah status pembayaran"
-                          className={`text-[10px] font-bold px-2.5 py-1 rounded-full uppercase flex items-center space-x-1 transition cursor-pointer ${
-                            isLunas ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 hover:bg-emerald-200' : 'bg-amber-100 text-amber-800 border border-amber-300 hover:bg-amber-200'
-                          }`}
-                        >
-                          {isLunas ? <CheckCircle2 className="w-3 h-3 text-emerald-600" /> : <Clock className="w-3 h-3 text-amber-600" />}
-                        <span>{isLunas ? 'LUNAS' : 'PENDING'}</span>
-                        </button>
-                      )}
+                    )}
                   </div>
 
                   <div className="flex items-center space-x-2 shrink-0">
@@ -1573,7 +1607,7 @@ export default function KasirRawatJalanPage() {
                     <span className="font-bold flex items-center gap-1 text-[10px]">
                       <MessageSquare className="w-3.5 h-3.5 text-rose-600" />
                       Alasan Pembatalan:
-                    </span>
+                  </span>
                     <p className="italic text-[11px] font-medium">{tx.catatan_admin}</p>
                   </div>
                 )}
@@ -1613,10 +1647,10 @@ export default function KasirRawatJalanPage() {
                   <span>Cetak A4 ({tx.nama_pasien})</span>
                 </button>
             </div>
-          </div>
-          );
-        })}
-      </div>
+        </div>
+        );
+      })}
+    </div>
 
       {/* FLOATING ACTION BAR */}
       {selectedTxIds.length > 0 && (

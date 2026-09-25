@@ -266,9 +266,11 @@ export default function InputRawatInapPage() {
 
       if (headerErr) throw headerErr;
 
+      const headerRegs = (headers || []).map((h: any) => h.no_reg);
       const { data: allItems, error: itemsErr } = await supabase
         .from('ranap_billing_items')
-        .select('no_reg, jumlah_total, ditanggung_pihak3, selisih_bayar');
+        .select('no_reg, jumlah_total, ditanggung_pihak3, selisih_bayar')
+        .in('no_reg', headerRegs.length > 0 ? headerRegs : ['']);
 
       if (itemsErr) throw itemsErr;
 
@@ -335,6 +337,99 @@ export default function InputRawatInapPage() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  const handleExportExcel = () => {
+    if (filteredBillings.length === 0) {
+      setModalNotif({
+        show: true,
+        type: 'warning',
+        title: 'Data Kosong',
+        message: 'Tidak ada data rekapitulasi yang dapat diekspor ke Excel sesuai filter saat ini.'
+      });
+      return;
+    }
+
+    let htmlContent = `
+      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+      <head>
+        <meta charset="utf-8" />
+        <style>
+          body { font-family: Arial, sans-serif; }
+          .title-kop { font-size: 14px; font-weight: bold; text-align: center; color: #000; }
+          .sub-kop { font-size: 11px; text-align: center; color: #333; margin-bottom: 20px; }
+          table { border-collapse: collapse; width: 100%; font-size: 10px; }
+          th { background-color: #047857; color: #ffffff; font-weight: bold; text-align: center; border: 1px solid #000000; padding: 8px; }
+          td { border: 1px solid #94a3b8; padding: 6px; vertical-align: middle; }
+          .text-center { text-align: center; }
+          .text-right { text-align: right; }
+          .font-bold { font-weight: bold; }
+          .total-row { background-color: #e2e8f0; font-weight: bold; }
+        </style>
+      </head>
+      <body>
+        <div class="title-kop">PEMERINTAH KABUPATEN KERINCI — DINAS KESEHATAN</div>
+        <div class="title-kop">RSUD KELAS D BUKIT KERMAN</div>
+        <div class="sub-kop">REKAPITULASI RESMI LAPORAN TAGIHAN RAWAT INAP KASIR</div>
+        <table>
+          <thead>
+            <tr>
+              <th>No. RM / Reg</th>
+              <th>Nama Pasien</th>
+              <th>NIK</th>
+              <th>Ruangan</th>
+              <th>Penjaminan</th>
+              <th>Metode Pembayaran</th>
+              <th>Status Verifikasi</th>
+              <th>Total Biaya (Rp)</th>
+              <th>Ditanggung BPJS (Rp)</th>
+              <th>Wajib Bayar Umum (Rp)</th>
+            </tr>
+          </thead>
+          <tbody>
+    `;
+
+    filteredBillings.forEach(b => {
+      htmlContent += `
+        <tr>
+          <td class="text-center" style="mso-number-format:'\@';">${b.no_reg}</td>
+          <td class="font-bold">${b.nama_pasien}</td>
+          <td class="text-center" style="mso-number-format:'\@';">${b.nik_pasien || '-'}</td>
+          <td>${b.ruang || '-'}</td>
+          <td class="text-center">${b.jenis_penjaminan}</td>
+          <td class="text-center">${b.metode_pembayaran}</td>
+          <td class="text-center">${b.status_verifikasi || 'PENDING_VERIFIKASI'}</td>
+          <td class="text-right">${b.total_biaya || 0}</td>
+          <td class="text-right">${b.total_ditanggung || 0}</td>
+          <td class="text-right">${b.total_selisih || 0}</td>
+        </tr>
+      `;
+    });
+
+    htmlContent += `
+          </tbody>
+          <tfoot>
+            <tr class="total-row">
+              <td colspan="7" class="text-right">TOTAL AKUMULASI:</td>
+              <td class="text-right">${totalBiayaCetak}</td>
+              <td class="text-right">${totalDitanggungCetak}</td>
+              <td class="text-right">${totalSelisihCetak}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </body>
+      </html>
+    `;
+
+    const blob = new Blob([htmlContent], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `Rekap_Tagihan_Rawat_Inap_RSUD_Bukit_Kerman_${new Date().toISOString().split('T')[0]}.xls`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const handleCariPasienByRM = async () => {
@@ -670,7 +765,6 @@ export default function InputRawatInapPage() {
     return matchSearch && matchFilter && matchStatus;
   });
 
-  // Tentukan data yang dicetak berdasarkan mode cetak (all atau selected)
   const billingsToPrint = printType === 'selected' 
     ? filteredBillings.filter(b => selectedBillingIds.includes(b.no_reg))
     : filteredBillings;
@@ -868,19 +962,18 @@ export default function InputRawatInapPage() {
               </div>
             </div>
 
-          </div>
-
-          <div className="px-6 py-4 bg-white border-t border-slate-200 flex items-center justify-between">
-            <span className="text-xs text-slate-500">
-              Dicatat oleh: <strong className="text-slate-800">{activeDetailPasien.bendahara_penerima || 'Petugas Kasir'}</strong>
-            </span>
-            <div className="flex items-center space-x-2">
-              <button
-                onClick={() => setShowDetailModal(false)}
-                className="bg-slate-200 hover:bg-slate-300 text-slate-800 px-5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer"
-              >
-                Tutup
-              </button>
+            <div className="px-6 py-4 bg-white border-t border-slate-200 flex items-center justify-between">
+              <span className="text-xs text-slate-500">
+                Dicatat oleh: <strong className="text-slate-800">{activeDetailPasien.bendahara_penerima || 'Petugas Kasir'}</strong>
+              </span>
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => setShowDetailModal(false)}
+                  className="bg-slate-200 hover:bg-slate-300 text-slate-800 px-5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer"
+                >
+                  Tutup
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1017,6 +1110,7 @@ export default function InputRawatInapPage() {
             <span className="bg-emerald-100 text-emerald-800 px-3 py-1 rounded-md text-xs font-black border border-emerald-200 uppercase">
               {patientData.bendahara}
             </span>
+
           </div>
         </div>
 
@@ -1058,7 +1152,7 @@ export default function InputRawatInapPage() {
           )}
         </div>
 
-        {/* TAB 2: DAFTAR RIWAYAT & EKSPOR EXCEL/CSV & CETAK REKAP */}
+        {/* TAB 2: DAFTAR RIWAYAT & EKSPOR EXCEL & CETAK REKAP */}
         {activeTab === 'riwayat' && (
           <div className="bg-white rounded-3xl shadow-xl border border-slate-200 p-6 sm:p-8 space-y-6 animate-fade-in print:bg-white print:shadow-none print:border-none print:p-0">
             <div className="flex items-center justify-between border-b border-slate-200 pb-4 print:hidden">
@@ -1091,13 +1185,14 @@ export default function InputRawatInapPage() {
                   <span>Cetak Rekap Semua ({filteredBillings.length})</span>
                 </button>
 
+                {/* TOMBOL EKSPORT EXCEL RESMI */}
                 <button
-                  onClick={handleExportCSV}
-                  className="flex items-center space-x-1.5 bg-slate-800 hover:bg-slate-700 text-white px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer shadow-sm"
-                  title="Unduh laporan ke Excel / CSV"
+                  onClick={handleExportExcel}
+                  className="flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer shadow-sm"
+                  title="Unduh laporan ke format Excel (.xls)"
                 >
                   <Download className="w-4 h-4" />
-                  <span>Ekspor Excel</span>
+                  <span>Ekspor Excel (.xls)</span>
                 </button>
 
                 <button
@@ -1260,7 +1355,6 @@ export default function InputRawatInapPage() {
                   ) : (
                     filteredBillings.map((b, index) => {
                       const isChecked = selectedBillingIds.includes(b.no_reg);
-                      // Saat cetak dengan mode 'selected', sembunyikan baris yang tidak dicentang
                       const shouldHideOnPrint = printType === 'selected' && !isChecked;
 
                       return (
@@ -1963,7 +2057,7 @@ export default function InputRawatInapPage() {
 
       </main>
 
-      {/* Floating Summary Bar (UX Enhancement untuk Kasir) */}
+      {/* Floating Summary Bar */}
       {activeTab === 'input' && !isFormLocked && (
         <div className="sticky bottom-4 z-40 max-w-5xl mx-auto w-full bg-slate-900/95 backdrop-blur-md text-white px-6 py-4 rounded-2xl shadow-2xl border border-emerald-500/50 flex flex-wrap items-center justify-between gap-4 print:hidden animate-fade-in">
           <div className="flex items-center space-x-3">

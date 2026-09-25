@@ -165,7 +165,7 @@ export default function FormKasirIGD() {
 
   const [riwayatTagihan, setRiwayatTagihan] = useState<TagihanRecord[]>([]);
 
-  // BACA RIWAYAT DARI SUPABASE DAN FALLBACK KE LOCALSTORAGE
+  // BACA RIWAYAT DARI SUPABASE DENGAN PEMBATASAN LIMIT (MENCEGAH PEMBENGKAKAN LOG & EGRESS) DAN FALLBACK KE LOCALSTORAGE
   const fetchRiwayatTagihan = async () => {
     try {
       const { data: headerData, error: headerError } = await supabase
@@ -174,7 +174,8 @@ export default function FormKasirIGD() {
           *,
           detail_pemeriksaan_igd (*)
         `)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .limit(100);
 
       if (headerError) throw headerError;
 
@@ -609,60 +610,89 @@ export default function FormKasirIGD() {
     }
   };
 
+  // FITUR EKSPOR EXCEL FORMAT RESMI (.xls / Spreadsheet Styled)
   const handleExportExcel = () => {
     if (filteredRiwayat.length === 0) {
       showToast('Tidak ada data yang dapat diexport.', 'error');
       return;
     }
 
-    const headers = [
-      'ID Transaksi',
-      'No RM',
-      'Nama Pasien',
-      'Tanggal',
-      'Dokter Pemeriksa',
-      'Triase',
-      'Penjaminan',
-      'Metode Bayar',
-      'Total Tarif (IDR)',
-      'Status Admin',
-      'Status Bayar'
-    ];
+    const excelHtml = `
+      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+      <head>
+        <meta charset="utf-8">
+        <style>
+          table { border-collapse: collapse; width: 100%; font-family: 'Segoe UI', Arial, sans-serif; }
+          th { background-color: #0f172a; color: #ffffff; font-weight: bold; text-align: center; padding: 10px; border: 1px solid #000000; font-size: 11px; }
+          td { padding: 8px; border: 1px solid #cbd5e1; font-size: 11px; vertical-align: middle; }
+          .header-title { font-size: 14px; font-weight: bold; text-align: center; color: #0f172a; }
+          .header-subtitle { font-size: 11px; text-align: center; color: #475569; margin-bottom: 15px; }
+          .text-right { text-align: right; }
+          .text-center { text-align: center; }
+          .font-bold { font-weight: bold; }
+          .total-row { background-color: #e2e8f0; font-weight: bold; }
+        </style>
+      </head>
+      <body>
+        <div class="header-title">PEMERINTAH KABUPATEN KERINCI - RSUD BUKIT KERMAN</div>
+        <div class="header-subtitle">REKAPITULASI LAPORAN KASIR INSTALASI GAWAT DARURAT (IGD)<br/>Tanggal Cetak: ${new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
+        <table>
+          <thead>
+            <tr>
+              <th>No</th>
+              <th>ID Transaksi</th>
+              <th>No RM</th>
+              <th>Nama Pasien</th>
+              <th>Tanggal</th>
+              <th>Dokter Pemeriksa</th>
+              <th>Triase</th>
+              <th>Penjaminan</th>
+              <th>Metode Bayar</th>
+              <th>Total Tarif (IDR)</th>
+              <th>Status Admin</th>
+              <th>Status Bayar</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filteredRiwayat.map((item, index) => `
+              <tr>
+                <td class="text-center">${index + 1}</td>
+                <td class="text-center">${item.id}</td>
+                <td class="text-center">${item.noRm || ''}</td>
+                <td class="font-bold">${item.namaPasien || ''}</td>
+                <td class="text-center">${item.tanggal || ''}</td>
+                <td>${item.dokter || ''}</td>
+                <td class="text-center">${item.triase || 'Hijau'}</td>
+                <td class="text-center">${item.penjaminan || 'Umum'}</td>
+                <td class="text-center">${item.metodeBayar || 'Tunai / Cash'}</td>
+                <td class="text-right font-bold">${item.totalTarif || 0}</td>
+                <td class="text-center">${item.status || 'Menunggu Verifikasi'}</td>
+                <td class="text-center">${item.statusBayar || 'Lunas'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+          <tfoot>
+            <tr class="total-row">
+              <td colspan="9" class="text-right font-bold">TOTAL PENDAPATAN KESELURUHAN FILTER:</td>
+              <td class="text-right font-bold">${totalNominalFilter}</td>
+              <td colspan="2"></td>
+            </tr>
+          </tfoot>
+        </table>
+      </body>
+      </html>
+    `;
 
-    const rows = filteredRiwayat.map((item) => [
-      item.id,
-      `"${item.noRm || ''}"`,
-      `"${item.namaPasien || ''}"`,
-      item.tanggal || '',
-      `"${item.dokter || ''}"`,
-      item.triase || 'Hijau',
-      item.penjaminan || 'Umum',
-      item.metodeBayar || 'Tunai / Cash',
-      item.totalTarif || 0,
-      item.status || 'Menunggu Verifikasi',
-      item.statusBayar || 'Lunas'
-    ]);
-
-    const csvContent =
-      '\uFEFF' +
-      [headers.join(','), ...rows.map((row) => row.join(','))].join('\n');
-
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const blob = new Blob([excelHtml], { type: 'application/vnd.ms-excel;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.setAttribute('href', url);
-    link.setAttribute(
-      'download',
-      `laporan_kasir_igd_${new Date().toISOString().split('T')[0]}.csv`
-    );
+    link.setAttribute('download', `rekap_kasir_igd_${new Date().toISOString().split('T')[0]}.xls`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
 
-    showToast(
-      `Berhasil mengekspor ${filteredRiwayat.length} data transaksi ke Excel!`,
-      'success'
-    );
+    showToast(`Berhasil mengekspor ${filteredRiwayat.length} data transaksi ke Excel (.xls) resmi!`, 'success');
   };
 
   const copySummaryToClipboard = () => {
@@ -1014,97 +1044,97 @@ export default function FormKasirIGD() {
                   onChange={(e) => setSearchTerm(e.target.value)}
                   placeholder="Cari tindakan medis..." 
                   className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:ring-2 focus:ring-sky-500 font-medium"
-                />
-              </div>
+              />
             </div>
+          </div>
 
-            {/* BARIS TINDAKAN FAVORIT (QUICK SHORTCUTS) */}
-            <div className="bg-sky-50/70 border border-sky-200 p-3.5 rounded-2xl mb-4">
-              <div className="flex items-center gap-1.5 mb-2 text-sky-900 text-[11px] font-black uppercase">
-                <Zap className="w-3.5 h-3.5 text-amber-500" /> Pintasan Cepat Tindakan Sering Digunakan:
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {['1', '17', '41', '12', '39', '20'].map((id) => {
-                  const item = daftarTindakanIGD.find(t => t.id === id);
-                  if (!item) return null;
-                  return (
-                    <button
-                      key={id}
-                      onClick={() => handleQtyChange(item.id, (selectedItems[item.id] || 0) + 1)}
-                      className="px-3 py-1.5 bg-white hover:bg-sky-600 hover:text-white text-sky-800 border border-sky-300 rounded-xl text-[11px] font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm group"
-                    >
-                      <span className="group-hover:text-white">+ {item.nama}</span>
-                      <span className="text-slate-500 group-hover:text-sky-100 font-mono text-[10px]">({formatRupiah(item.tarif)})</span>
-                    </button>
-                  );
-                })}
-              </div>
+          {/* BARIS TINDAKAN FAVORIT (QUICK SHORTCUTS) */}
+          <div className="bg-sky-50/70 border border-sky-200 p-3.5 rounded-2xl mb-4">
+            <div className="flex items-center gap-1.5 mb-2 text-sky-900 text-[11px] font-black uppercase">
+              <Zap className="w-3.5 h-3.5 text-amber-500" /> Pintasan Cepat Tindakan Sering Digunakan:
             </div>
-
-            {/* FILTER KATEGORI (CHIPS/BADGES) */}
-            <div className="flex flex-wrap gap-1.5 mb-4">
-              {kategoriList.map((kat) => (
-                <button
-                  key={kat}
-                  onClick={() => setSelectedKategoriFilter(kat)}
-                  className={`px-3 py-1 rounded-full text-[10px] font-bold transition cursor-pointer ${
-                    selectedKategoriFilter === kat
-                      ? 'bg-sky-700 text-white shadow-sm'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  {kat}
-                </button>
-              ))}
+            <div className="flex flex-wrap gap-2">
+              {['1', '17', '41', '12', '39', '20'].map((id) => {
+                const item = daftarTindakanIGD.find(t => t.id === id);
+                if (!item) return null;
+                return (
+                  <button
+                    key={id}
+                    onClick={() => handleQtyChange(item.id, (selectedItems[item.id] || 0) + 1)}
+                    className="px-3 py-1.5 bg-white hover:bg-sky-600 hover:text-white text-sky-800 border border-sky-300 rounded-xl text-[11px] font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm group"
+                  >
+                    <span className="group-hover:text-white">+ {item.nama}</span>
+                    <span className="text-slate-500 group-hover:text-sky-100 font-mono text-[10px]">({formatRupiah(item.tarif)})</span>
+                  </button>
+                );
+              })}
             </div>
+          </div>
 
-            <div className="overflow-x-auto border border-slate-200 rounded-2xl mb-6 shadow-sm max-h-[450px] overflow-y-auto">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead className="sticky top-0 bg-slate-900 text-white uppercase text-[10px] z-10">
-                  <tr>
-                    <th className="p-3 border-b">Kategori</th>
-                    <th className="p-3 border-b">Jenis Pemeriksaan / Tindakan Medis IGD</th>
-                    <th className="p-3 text-right border-b">Tarif (Rp)</th>
-                    <th className="p-3 text-center w-36 border-b">Jumlah (Qty)</th>
-                    <th className="p-3 text-right border-b">Subtotal</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredTindakan.length > 0 ? (
-                    filteredTindakan.map((item) => {
-                      const qty = selectedItems[item.id] || 0;
-                      const subtotal = qty * item.tarif;
+          {/* FILTER KATEGORI (CHIPS/BADGES) */}
+          <div className="flex flex-wrap gap-1.5 mb-4">
+            {kategoriList.map((kat) => (
+              <button
+                key={kat}
+                onClick={() => setSelectedKategoriFilter(kat)}
+                className={`px-3 py-1 rounded-full text-[10px] font-bold transition cursor-pointer ${
+                  selectedKategoriFilter === kat
+                    ? 'bg-sky-700 text-white shadow-sm'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                {kat}
+              </button>
+            ))}
+          </div>
 
-                      return (
-                        <tr key={item.id} className="hover:bg-slate-50 transition">
-                          <td className="p-3 font-bold text-[10px] text-sky-700 uppercase">{item.kategori}</td>
-                          <td className="p-3 font-bold text-slate-800">{item.nama}</td>
-                          <td className="p-3 text-right text-slate-600">{formatRupiah(item.tarif)}</td>
-                          <td className="p-3 text-center">
-                            <div className="flex items-center justify-center space-x-1">
-                              <button
-                                onClick={() => handleQtyChange(item.id, qty - 1)}
-                                className="w-7 h-7 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg flex items-center justify-center font-bold transition cursor-pointer"
-                                title="Kurangi"
-                              >
-                                <Minus className="w-3 h-3" />
-                              </button>
-                              <input 
-                                type="number" 
-                                min="0" 
-                                value={qty === 0 ? '' : qty} 
-                                onChange={(e) => handleQtyChange(item.id, parseInt(e.target.value) || 0)} 
-                                placeholder="0"
-                                className="w-12 p-1 text-center border border-slate-300 rounded-lg text-xs font-bold bg-white focus:ring-2 focus:ring-sky-500"
-                              />
-                              <button
-                                onClick={() => handleQtyChange(item.id, qty + 1)}
-                                className="w-7 h-7 bg-sky-600 hover:bg-sky-500 text-white rounded-lg flex items-center justify-center font-bold transition cursor-pointer shadow-sm"
-                                title="Tambah"
-                              >
-                                <Plus className="w-3 h-3" />
-                              </button>
-                          </div>
+          <div className="overflow-x-auto border border-slate-200 rounded-2xl mb-6 shadow-sm max-h-[450px] overflow-y-auto">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead className="sticky top-0 bg-slate-900 text-white uppercase text-[10px] z-10">
+                <tr>
+                  <th className="p-3 border-b">Kategori</th>
+                  <th className="p-3 border-b">Jenis Pemeriksaan / Tindakan Medis IGD</th>
+                  <th className="p-3 text-right border-b">Tarif (Rp)</th>
+                  <th className="p-3 text-center w-36 border-b">Jumlah (Qty)</th>
+                  <th className="p-3 text-right border-b">Subtotal</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filteredTindakan.length > 0 ? (
+                  filteredTindakan.map((item) => {
+                    const qty = selectedItems[item.id] || 0;
+                    const subtotal = qty * item.tarif;
+
+                    return (
+                      <tr key={item.id} className="hover:bg-slate-50 transition">
+                        <td className="p-3 font-bold text-[10px] text-sky-700 uppercase">{item.kategori}</td>
+                        <td className="p-3 font-bold text-slate-800">{item.nama}</td>
+                        <td className="p-3 text-right text-slate-600">{formatRupiah(item.tarif)}</td>
+                        <td className="p-3 text-center">
+                          <div className="flex items-center justify-center space-x-1">
+                            <button
+                              onClick={() => handleQtyChange(item.id, qty - 1)}
+                              className="w-7 h-7 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg flex items-center justify-center font-bold transition cursor-pointer"
+                              title="Kurangi"
+                            >
+                              <Minus className="w-3 h-3" />
+                            </button>
+                            <input 
+                              type="number" 
+                              min="0" 
+                              value={qty === 0 ? '' : qty} 
+                              onChange={(e) => handleQtyChange(item.id, parseInt(e.target.value) || 0)} 
+                              placeholder="0"
+                              className="w-12 p-1 text-center border border-slate-300 rounded-lg text-xs font-bold bg-white focus:ring-2 focus:ring-sky-500"
+                          />
+                          <button
+                            onClick={() => handleQtyChange(item.id, qty + 1)}
+                            className="w-7 h-7 bg-sky-600 hover:bg-sky-500 text-white rounded-lg flex items-center justify-center font-bold transition cursor-pointer shadow-sm"
+                            title="Tambah"
+                          >
+                            <Plus className="w-3 h-3" />
+                          </button>
+                        </div>
                         </td>
                         <td className="p-3 text-right font-black text-sky-700">
                           {subtotal > 0 ? formatRupiah(subtotal) : '-'}
