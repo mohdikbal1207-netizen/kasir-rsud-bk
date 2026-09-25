@@ -2,13 +2,14 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { Database, Download, RefreshCcw, Search, Activity, PlusCircle, Edit3, Trash2, Calendar, ChevronLeft, ChevronRight, Copy, Check, FilterX, AlertCircle, Clock, Zap, ToggleLeft, ToggleRight, ListFilter, User, Target, ArrowUp, FileJson, AlignJustify, List, Maximize2, X, ShieldAlert } from 'lucide-react';
+import { Database, Download, RefreshCcw, Search, Activity, PlusCircle, Edit3, Trash2, Calendar, ChevronLeft, ChevronRight, Copy, Check, FilterX, AlertCircle, Clock, Zap, ToggleLeft, ToggleRight, ListFilter, User, Target, ArrowUp, FileJson, AlignJustify, List, Maximize2, X, ShieldAlert, UserCheck } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import AdminHeader from '@/components/admin/AdminHeader';
 import AdminFooter from '@/components/admin/AdminFooter';
 
 export default function AuditLogsPage() {
   const [logs, setLogs] = useState<any[]>([]);
+  const [userMap, setUserMap] = useState<Record<string, any>>({});
   const [isLoading, setIsLoading] = useState<boolean>(true);
   
   // State Filters & Sorting
@@ -47,6 +48,18 @@ export default function AuditLogsPage() {
   const fetchLogs = async (silentLoad = false) => {
     if (!silentLoad) setIsLoading(true);
     try {
+      // 1. Ambil data users untuk mapping nama lengkap pelaku
+      const { data: usersData } = await supabase.from('users').select('id, email, nama_lengkap, role, unit_kerja');
+      const map: Record<string, any> = {};
+      if (usersData) {
+        usersData.forEach(u => {
+          map[u.id] = u;
+          if (u.email) map[u.email] = u;
+        });
+        setUserMap(map);
+      }
+
+      // 2. Ambil data audit logs
       let query = supabase
         .from('audit_logs')
         .select('*')
@@ -72,26 +85,31 @@ export default function AuditLogsPage() {
     fetchLogs();
   }, []);
 
+  // Supabase Realtime WebSockets Integration untuk Live Mode Instan
   useEffect(() => {
-    let interval: NodeJS.Timeout;
+    if (!isLiveMode) return;
+
+    const channel = supabase
+      .channel('audit_logs_realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'audit_logs' },
+        (payload) => {
+          if (payload.eventType === 'INSERT') {
+            setLogs((prev) => [payload.new, ...prev]);
+          }
+        }
+      )
+      .subscribe();
+
     let timerInterval: NodeJS.Timeout;
-
-    if (isLiveMode) {
-      setCountdown(15);
-      timerInterval = setInterval(() => {
-        setCountdown((prev) => (prev > 1 ? prev - 1 : 15));
-      }, 1000);
-
-      interval = setInterval(() => {
-        fetchLogs(true);
-        setCountdown(15);
-      }, 15000);
-    } else {
-      setCountdown(15);
-    }
+    setCountdown(15);
+    timerInterval = setInterval(() => {
+      setCountdown((prev) => (prev > 1 ? prev - 1 : 15));
+    }, 1000);
 
     return () => {
-      clearInterval(interval);
+      supabase.removeChannel(channel);
       clearInterval(timerInterval);
     };
   }, [isLiveMode]);
@@ -121,23 +139,31 @@ export default function AuditLogsPage() {
   }, [logs]);
 
   const uniqueUsers = useMemo(() => { 
-    const users = logs.map(log => log.performed_by || log.admin_id).filter(Boolean);
+    const users = logs.map(log => {
+      const actorKey = log.performed_by || log.admin_id;
+      return userMap[actorKey]?.nama_lengkap || actorKey;
+    }).filter(Boolean);
     return Array.from(new Set(users)).sort();
-  }, [logs]);
+  }, [logs, userMap]);
 
   const filteredLogs = useMemo(() => {
     let filtered = logs.filter(log => {
+      const actorKey = log.performed_by || log.admin_id || '';
+      const actorName = userMap[actorKey]?.nama_lengkap || '';
+      
       const matchesSearch = 
         (log.table_name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
         (log.action || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (log.admin_id || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (log.performed_by || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+        actorKey.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        actorName.toLowerCase().includes(searchTerm.toLowerCase()) ||
         (log.description || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
         (log.record_id || '').toLowerCase().includes(searchTerm.toLowerCase());
 
       const matchesAction = actionFilter === 'ALL' || log.action === actionFilter;
       const matchesTable = tableFilter === 'ALL' || log.table_name === tableFilter;
-      const matchesUser = userFilter === 'ALL' || log.performed_by === userFilter || log.admin_id === userFilter; 
+      
+      const resolvedUser = userMap[actorKey]?.nama_lengkap || actorKey;
+      const matchesUser = userFilter === 'ALL' || resolvedUser === userFilter || log.performed_by === userFilter || log.admin_id === userFilter; 
 
       let matchesDate = true;
       if (dateFrom || dateTo) {
@@ -166,7 +192,7 @@ export default function AuditLogsPage() {
     });
 
     return filtered;
-  }, [logs, searchTerm, actionFilter, tableFilter, userFilter, dateFrom, dateTo, sortOrder]);
+  }, [logs, searchTerm, actionFilter, tableFilter, userFilter, dateFrom, dateTo, sortOrder, userMap]);
 
   const stats = useMemo(() => {
     const total = filteredLogs.length;
@@ -236,8 +262,8 @@ export default function AuditLogsPage() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleCopyJSON = (logId: string, oldData: any, newData: any) => {
-    const textToCopy = formatJSONForDisplay(oldData, newData);
+  const handleCopyJSON = (logId: string, content: any) => {
+    const textToCopy = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
     navigator.clipboard.writeText(textToCopy);
     setCopiedId(logId);
     setTimeout(() => setCopiedId(null), 2000);
@@ -248,18 +274,23 @@ export default function AuditLogsPage() {
       alert('Tidak ada data log untuk diekspor.');
       return;
     }
-    const headers = ['Waktu', 'Nama Tabel', 'Aksi', 'ID Record', 'Admin ID', 'Performed By', 'Deskripsi', 'Data Lama', 'Data Baru'];
-    const rows = filteredLogs.map(log => [
-      `"${new Date(log.created_at).toLocaleString('id-ID')}"`,
-      `"${log.table_name || '-'}"`,
-      `"${log.action || '-'}"`,
-      `"${log.record_id || '-'}"`,
-      `"${log.admin_id || '-'}"`,
-      `"${log.performed_by || '-'}"`,
-      `"${log.description ? String(log.description).replace(/"/g, '""') : '-'}"`,
-      `"${log.old_data ? JSON.stringify(log.old_data).replace(/"/g, '""') : '-'}"`,
-      `"${log.new_data ? JSON.stringify(log.new_data).replace(/"/g, '""') : '-'}"`
-    ]);
+    const headers = ['Waktu', 'Nama Tabel', 'Aksi', 'ID Record', 'Admin ID', 'Nama Pelaku', 'Deskripsi', 'Data Lama', 'Data Baru'];
+    const rows = filteredLogs.map(log => {
+      const actorKey = log.performed_by || log.admin_id;
+      const actorObj = userMap[actorKey];
+      const actorName = actorObj?.nama_lengkap || actorKey || '-';
+      return [
+        `"${new Date(log.created_at).toLocaleString('id-ID')}"`,
+        `"${log.table_name || '-'}"`,
+        `"${log.action || '-'}"`,
+        `"${log.record_id || '-'}"`,
+        `"${log.admin_id || '-'}"`,
+        `"${actorName}"`,
+        `"${log.description ? String(log.description).replace(/"/g, '""') : '-'}"`,
+        `"${log.old_data ? JSON.stringify(log.old_data).replace(/"/g, '""') : '-'}"`,
+        `"${log.new_data ? JSON.stringify(log.new_data).replace(/"/g, '""') : '-'}"`
+      ];
+    });
     const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
@@ -317,11 +348,12 @@ export default function AuditLogsPage() {
     return 'bg-emerald-50 text-emerald-700 border-emerald-200';
   };
 
-  const formatJSONForDisplay = (dataLama: any, dataBaru: any) => {
+  const formatJSONForDisplay = (log: any) => {
     const obj: any = {};
-    if (dataLama) obj.data_lama = dataLama;
-    if (dataBaru) obj.data_baru = dataBaru;
-    if (Object.keys(obj).length === 0) return 'Data payload kosong.';
+    if (log.description) obj.deskripsi = log.description;
+    if (log.old_data) obj.data_lama = log.old_data;
+    if (log.new_data) obj.data_baru = log.new_data;
+    if (Object.keys(obj).length === 0) return 'Tidak ada payload data tambahan tersimpan.';
     return JSON.stringify(obj, null, 2);
   };
 
@@ -336,6 +368,42 @@ export default function AuditLogsPage() {
       }
     });
     return changed;
+  };
+
+  // Komponen Visual Diff Viewer untuk perbandingan field secara berdampingan
+  const renderVisualDiff = (oldData: any, newData: any) => {
+    if (!oldData || !newData) return null;
+    const allKeys = Array.from(new Set([...Object.keys(oldData), ...Object.keys(newData)]));
+
+    return (
+      <div className="space-y-1.5 my-3 font-mono text-[11px]">
+        <div className="text-[10px] font-black text-amber-400 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+          <div className="w-2 h-2 rounded-full bg-amber-400"></div> Ringkasan Perubahan Field:
+        </div>
+        {allKeys.map((key) => {
+          const valOld = JSON.stringify(oldData[key]);
+          const valNew = JSON.stringify(newData[key]);
+          const isChanged = valOld !== valNew;
+
+          if (!isChanged) return null;
+
+          return (
+            <div key={key} className="bg-slate-900 p-2.5 rounded-xl border border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-2 shadow-inner">
+              <span className="text-emerald-400 font-bold shrink-0">{key}:</span>
+              <div className="flex items-center gap-2 flex-wrap text-xs">
+                <span className="bg-rose-950/80 text-rose-300 px-2 py-0.5 rounded border border-rose-900/50 line-through truncate max-w-[200px]" title={valOld}>
+                  {valOld}
+                </span>
+                <span className="text-slate-500 font-bold">→</span>
+                <span className="bg-emerald-950/80 text-emerald-300 px-2 py-0.5 rounded border border-emerald-900/50 font-bold truncate max-w-[200px]" title={valNew}>
+                  {valNew}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
   };
 
   const tdPad = isCompact ? 'p-2.5' : 'p-4';
@@ -502,18 +570,18 @@ export default function AuditLogsPage() {
 
             <div className="flex bg-slate-100 rounded-xl p-1 shadow-inner border border-slate-200">
                <button
-                  onClick={() => setIsCompact(false)}
-                  className={`p-1.5 rounded-lg transition ${!isCompact ? 'bg-white shadow text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}
-                  title="Tampilan Longgar"
-                >
-                  <List className="w-4 h-4" />
+                 onClick={() => setIsCompact(false)}
+                 className={`p-1.5 rounded-lg transition ${!isCompact ? 'bg-white shadow text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}
+                 title="Tampilan Longgar"
+               >
+                 <List className="w-4 h-4" />
                </button>
                <button
-                  onClick={() => setIsCompact(true)}
-                  className={`p-1.5 rounded-lg transition ${isCompact ? 'bg-white shadow text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}
-                  title="Tampilan Kompak (Rapat)"
-                >
-                  <AlignJustify className="w-4 h-4" />
+                 onClick={() => setIsCompact(true)}
+                 className={`p-1.5 rounded-lg transition ${isCompact ? 'bg-white shadow text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}
+                 title="Tampilan Kompak (Rapat)"
+               >
+                 <AlignJustify className="w-4 h-4" />
                </button>
             </div>
 
@@ -726,7 +794,7 @@ export default function AuditLogsPage() {
                   <th className={`${tdPad} border-b border-slate-200 bg-slate-100 transition-all`}>Nama Tabel</th>
                   <th className={`${tdPad} border-b border-slate-200 text-center bg-slate-100 transition-all`}>Aksi</th>
                   <th className={`${tdPad} border-b border-slate-200 bg-slate-100 transition-all`}>ID Record</th>
-                  <th className={`${tdPad} border-b border-slate-200 bg-slate-100 transition-all`}>Admin / Pelaku</th>
+                  <th className={`${tdPad} border-b border-slate-200 bg-slate-100 transition-all`}>Admin / Nama Pelaku</th>
                   <th className={`${tdPad} border-b border-slate-200 bg-slate-100 transition-all`}>Payload Data (JSON / Detail)</th>
                 </tr>
               </thead>
@@ -761,6 +829,11 @@ export default function AuditLogsPage() {
                   </tr>
                 ) : (
                   currentDisplayedLogs.map((log) => {
+                    const actorKey = log.performed_by || log.admin_id;
+                    const matchedUser = userMap[actorKey];
+                    const namaPelaku = matchedUser?.nama_lengkap || actorKey || 'Sistem / Otomatis';
+                    const rolePelaku = matchedUser?.role ? matchedUser.role.toUpperCase() : (matchedUser?.unit_kerja || 'SYSTEM');
+
                     const changedFields = log.action === 'UPDATE' ? getChangedFields(log.old_data, log.new_data) : [];
                     const relativeTime = getRelativeTime(log.created_at); 
                     
@@ -814,11 +887,21 @@ export default function AuditLogsPage() {
                           )}
                         </td>
                         <td className={`${tdPad} align-top transition-all`}>
-                          <div className="flex flex-col max-w-[140px]">
-                             <span className="text-slate-800 font-bold truncate" title={log.performed_by || log.admin_id}>
-                               {log.performed_by || log.admin_id || 'Sistem'}
+                          <div className="flex flex-col max-w-[180px]">
+                             <span className="text-slate-900 font-bold truncate flex items-center gap-1" title={namaPelaku}>
+                               <UserCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                               {namaPelaku}
                              </span>
-                             {log.target_user_id && <span className="text-[9px] text-slate-400 font-mono truncate mt-1 bg-slate-50 px-1 py-0.5 rounded border border-slate-100" title={log.target_user_id}>Target: {log.target_user_id}</span>}
+                             <div className="flex items-center gap-1 mt-1">
+                               <span className="text-[9px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded border border-slate-200 font-bold uppercase tracking-wider">
+                                 {rolePelaku}
+                               </span>
+                             </div>
+                             {actorKey && actorKey !== namaPelaku && (
+                               <span className="text-[9px] text-slate-400 font-mono truncate mt-1 bg-slate-50 px-1 py-0.5 rounded border border-slate-100" title={actorKey}>
+                                 {actorKey}
+                               </span>
+                             )}
                           </div>
                         </td>
                         <td className={`${tdPad} text-slate-600 font-mono align-top w-[40%] transition-all`}>
@@ -844,7 +927,7 @@ export default function AuditLogsPage() {
                                 <button 
                                   onClick={(e) => {
                                     e.preventDefault();
-                                    handleCopyJSON(log.id, log.old_data, log.new_data);
+                                    handleCopyJSON(log.id, formatJSONForDisplay(log));
                                   }}
                                   className="absolute top-2 right-2 bg-slate-700 hover:bg-slate-600 text-slate-200 p-1.5 rounded-lg flex items-center justify-center transition opacity-0 group-hover/jsonbox:opacity-100 z-10"
                                   title="Salin JSON"
@@ -857,6 +940,9 @@ export default function AuditLogsPage() {
                                     <strong className="text-emerald-400">Deskripsi:</strong> {log.description}
                                   </div>
                                 )}
+
+                                {/* Visual Diff Viewer untuk Update */}
+                                {log.action === 'UPDATE' && renderVisualDiff(log.old_data, log.new_data)}
 
                                 {log.action === 'UPDATE' && log.old_data && log.new_data ? (
                                   <div className="grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:divide-x divide-slate-700">
@@ -883,7 +969,7 @@ export default function AuditLogsPage() {
                                       PAYLOAD {log.action}
                                     </div>
                                     <pre className="text-[11px] text-emerald-300 leading-relaxed font-mono">
-                                      {formatJSONForDisplay(log.old_data, log.new_data)}
+                                      {formatJSONForDisplay(log)}
                                     </pre>
                                   </div>
                                 )}
