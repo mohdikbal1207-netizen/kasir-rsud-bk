@@ -154,7 +154,7 @@ export default function AdminVerificationPage() {
         target_user_id: targetUserId,
         description: details,
         timestamp: new Date().toISOString()
-      }).then(() => {}).catch(() => {});
+      }).then(() => {}, () => {});
     } catch (err) {
       console.warn('Log Ingestion Notice:', err);
     }
