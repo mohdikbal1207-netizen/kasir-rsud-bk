@@ -127,7 +127,7 @@ export default function KasirHeader({
         // 2. Ambil data dari tabel `profiles` (Fallback)
         const { data: profileData } = await supabase
           .from('profiles')
-          .select('nama_lengkap, foto_url, foto_uri')
+          .select('nama_lengkap, foto_url, foto_url')
           .eq('id', userId)
           .maybeSingle();
 
@@ -146,7 +146,7 @@ export default function KasirHeader({
           propUserAvatar || 
           userData?.foto_url || 
           profileData?.foto_url || 
-          profileData?.foto_uri || 
+          profileData?.foto_url || 
           authUser.user_metadata?.avatar_url || 
           authUser.user_metadata?.foto_url;
 

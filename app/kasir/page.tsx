@@ -47,7 +47,6 @@ interface UserProfile {
   unit_kerja?: string;
   no_telepon?: string;
   foto_url?: string | null;
-  foto_uri?: string | null;
   email?: string;
   role?: string;
 }

@@ -73,7 +73,6 @@ interface SystemUser {
     unit_kerja?: string;
     no_telepon?: string;
     foto_url?: string | null;
-    foto_uri?: string | null;
   } | null;
 }
 
@@ -218,7 +217,7 @@ export default function AdminVerificationPage() {
           tanggal_lahir: user.tanggal_lahir || profile?.tanggal_lahir || '',
           unit_kerja: user.unit_kerja || profile?.unit_kerja || '',
           no_telepon: user.no_telepon || profile?.no_telepon || '',
-          foto_url: user.foto_url || profile?.foto_url || profile?.foto_uri || null,
+          foto_url: user.foto_url || profile?.foto_url || profile?.foto_url || null,
         };
       });
 
@@ -968,7 +967,7 @@ export default function AdminVerificationPage() {
               const isActionProcessing = actionLoadingId === item.id;
               const namaLengkap = item.nama_lengkap || item.profiles?.nama_lengkap || 'Tanpa Nama';
               const unitKerja = item.unit_kerja || item.profiles?.unit_kerja || item.role || 'Staf Rumah Sakit';
-              const userPhotoUrl = item.foto_url || item.profiles?.foto_url || item.profiles?.foto_uri;
+              const userPhotoUrl = item.foto_url || item.profiles?.foto_url || item.profiles?.foto_url;
               const noTelepon = item.no_telepon || item.profiles?.no_telepon;
               const nik = item.nik || item.profiles?.nik || '-';
               const nip = item.nip || item.profiles?.nip || '-';
@@ -1645,8 +1644,8 @@ export default function AdminVerificationPage() {
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-4">
                 <div className="w-16 h-16 rounded-2xl bg-slate-100 border border-slate-200 overflow-hidden flex items-center justify-center flex-shrink-0">
-                  {selectedUser.foto_url || selectedUser.profiles?.foto_url || selectedUser.profiles?.foto_uri ? (
-                    <img src={selectedUser.foto_url || selectedUser.profiles?.foto_url || selectedUser.profiles?.foto_uri || ''} alt="Foto Staf" className="w-full h-full object-cover" />
+                  {selectedUser.foto_url || selectedUser.profiles?.foto_url || selectedUser.profiles?.foto_url ? (
+                    <img src={selectedUser.foto_url || selectedUser.profiles?.foto_url || selectedUser.profiles?.foto_url || ''} alt="Foto Staf" className="w-full h-full object-cover" />
                   ) : (
                     <User className="w-8 h-8 text-slate-400" />
                   )}
