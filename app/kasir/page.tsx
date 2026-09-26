@@ -326,7 +326,7 @@ export default function KasirDashboardPage() {
     router.push(`/kasir/kwitansi?search=${encodeURIComponent(quickPatientQuery)}`);
   };
 
-  const operatorPhoto = operatorProfile?.foto_url || operatorProfile?.foto_uri;
+  const operatorPhoto = operatorProfile?.foto_url || operatorProfile?.foto_url;
   const activeAnnouncements = announcements.filter(a => !dismissedIds.includes(a.id));
   const dismissedAnnouncements = announcements.filter(a => dismissedIds.includes(a.id));
 
