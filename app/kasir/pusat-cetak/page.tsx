@@ -9,6 +9,7 @@ import {
 import { useRouter } from 'next/navigation';
 import KasirHeader from '@/components/kasir/KasirHeader';
 import KasirFooter from '@/components/kasir/KasirFooter';
+import { supabase } from '@/lib/supabase';
 
 interface KasirRecord {
   id: string | number;
@@ -27,33 +28,52 @@ interface KasirRecord {
 interface RawKasirItem {
   id: string | number;
   tanggal_transaksi?: string;
+  tanggal_record?: string;
+  tgl_transaksi?: string;
   tanggal?: string;
   created_at?: string;
   tanggal_pemeriksaan?: string;
   masuk_tgl?: string;
   no_rm?: string;
+  norm?: string;
+  no_rekam_medis?: string;
   no_reg?: string;
   nama_pasien?: string;
+  pasien_nama?: string;
+  nama?: string;
   poli_tujuan?: string;
+  nama_poli?: string;
+  poli?: string;
   triase?: string;
   dokter_pemeriksa?: string;
   ruang?: string;
   dokter_merawat?: string;
   no_sep_bpjs?: string;
   no_transaksi?: string;
+  no_kwitansi?: string;
+  no_resep?: string;
   jenis_penjaminan?: string;
   metode_bayar?: string;
   penjaminan?: string;
   penjamin?: string;
+  cara_bayar?: string;
+  jenis_pasien?: string;
+  penjamin_nama?: string;
+  kelompok_pasien?: string;
   total_biaya?: number;
+  total_nominal?: number;
+  total_tarif?: number;
   total_bayar?: number;
   total_keseluruhan?: number;
   total_biaya_ranap?: number;
   status_bayar?: string;
   status_verifikasi?: string;
+  status?: string;
   petugas_input_nama?: string;
   petugas_nama?: string;
   metode_pembayaran?: string;
+  sumber_modul?: string;
+  jenis_layanan?: string;
 }
 
 interface PrintLogItem {
@@ -68,10 +88,10 @@ export default function PusatCetakKasir() {
   const router = useRouter();
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // [OPTIMASI EGRESS]: Ref untuk AbortController guna membatalkan request gantung/duplikat
+  // Ref untuk AbortController guna membatalkan request gantung/duplikat
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // [OPTIMASI LOG INGESTION]: Ref Throttle untuk mencegah spam penulisan log ke server/database
+  // Ref Throttle untuk mencegah spam penulisan log ke server/database
   const lastLogTimestampRef = useRef<{ [key: string]: number }>({});
 
   const [activeTab, setActiveTab] = useState<'RAJAL' | 'IGD' | 'RANAP' | 'OBAT'>('RAJAL');
@@ -85,11 +105,11 @@ export default function PusatCetakKasir() {
   // Filter & Centang Baris
   const [penjaminFilter, setPenjaminFilter] = useState<string>('SEMUA');
   const [petugasFilter, setPetugasFilter] = useState<string>('SEMUA');
-  const [shiftFilter, setShiftFilter] = useState<string>('SEMUA'); // SEMUA, PAGI, SORE, MALAM
+  const [shiftFilter, setShiftFilter] = useState<string>('SEMUA');
   const [metodeBayarFilter, setMetodeBayarFilter] = useState<string>('SEMUA');
   const [selectedIds, setSelectedIds] = useState<(string | number)[]>([]);
 
-  // State Filter Rentang Tanggal (Date Range)
+  // State Filter Rentang Tanggal
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
 
@@ -97,7 +117,7 @@ export default function PusatCetakKasir() {
   const [sortField, setSortField] = useState<'tanggal' | 'nama_pasien' | 'total_biaya'>('tanggal');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
-  // Paginasi & Opsi Layout Cetak Struk (A4 vs Thermal 80mm)
+  // Paginasi & Layout Cetak Struk
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [itemsPerPage, setItemsPerPage] = useState<number>(10);
   const [printLayoutType, setPrintLayoutType] = useState<'A4' | 'THERMAL'>('A4');
@@ -106,7 +126,7 @@ export default function PusatCetakKasir() {
   const [previewRecord, setPreviewRecord] = useState<KasirRecord | null>(null);
   const [printMode, setPrintMode] = useState<'SINGLE' | 'REKAP' | 'BATCH' | 'SHIFT_REPORT'>('SINGLE');
 
-  // State Modal Bantuan Pintasan, Catatan Kaki, Log Audit, & Rekonsiliasi Shift
+  // State Modal
   const [showShortcutsModal, setShowShortcutsModal] = useState<boolean>(false);
   const [showAuditModal, setShowAuditModal] = useState<boolean>(false);
   const [showShiftModal, setShowShiftModal] = useState<boolean>(false);
@@ -119,31 +139,25 @@ export default function PusatCetakKasir() {
     setTimeout(() => setToastMessage(null), 4000);
   };
 
-  // === FUNGSI LOG INGESTION & EGRESS TRACKING DENGAN THROTTLE AMAN ===
   const ingestAuditLog = useCallback(async (actionType: string, targetId: string, description: string) => {
     try {
       const logKey = `${actionType}_${targetId}`;
       const now = Date.now();
       const lastTime = lastLogTimestampRef.current[logKey] || 0;
       
-      // Throttle 3 detik untuk mencegah lonjakan penulisan log berulang
       if (now - lastTime < 3000) return;
       lastLogTimestampRef.current[logKey] = now;
 
-      // Non-blocking background log transmission ke server
       fetch('/api/kasir/audit-log', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action_type: actionType, target_id: targetId, description, timestamp: new Date().toISOString() })
-      }).catch(() => {
-        // Fallback aman jika endpoint audit belum aktif sepenuhnya
-      });
+      }).catch(() => {});
     } catch (err) {
       console.warn('Audit Log Notice:', err);
     }
   }, []);
 
-  // Deteksi Shift Aktif Berdasarkan Waktu Jam Sekarang
   const detectCurrentShift = useCallback(() => {
     const hour = new Date().getHours();
     if (hour >= 7 && hour < 14) return 'PAGI';
@@ -151,7 +165,171 @@ export default function PusatCetakKasir() {
     return 'MALAM';
   }, []);
 
-  // Global Keyboard Shortcuts (ESC, Ctrl+F, Ctrl+P, Ctrl+R)
+  // Fetch data kasir dengan penanganan API & Supabase Direct yang akurat
+  const fetchKasirData = useCallback(async () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    setIsLoading(true);
+    setErrorMessage(null);
+    setSelectedIds([]); 
+    setCurrentPage(1);
+
+    try {
+      let rawData: RawKasirItem[] = [];
+      let fetchSuccess = false;
+
+      // 1. Coba ambil dari Backend API dulu
+      try {
+        const response = await fetch(`/api/kasir/pusat-cetak?jenis_layanan=${activeTab}&limit=5000`, { signal: controller.signal });
+        
+        if (response.ok) {
+          const result = await response.json();
+          // PERBAIKAN LOGIKA: Ambil data dari API jika result.data berupa array (termasuk < 100 data)
+          if (result.success && Array.isArray(result.data) && result.data.length > 0) {
+            rawData = result.data;
+            fetchSuccess = true;
+          }
+        }
+      } catch (apiErr: any) {
+        if (apiErr.name === 'AbortError') return;
+        console.warn('Gagal ambil data via API backend, mengalihkan ke Supabase direct:', apiErr);
+      }
+
+      // 2. Fallback: Query Direct Supabase jika API gagal / data kosong
+      if (!fetchSuccess || rawData.length === 0) {
+        if (activeTab === 'RAJAL') {
+          const { data, error } = await supabase
+            .from('kasir_rajal')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .range(0, 4999);
+          if (error) console.error('Supabase Rajal Fetch Error:', error);
+          if (!error && data && data.length > 0) rawData = data;
+        } else if (activeTab === 'IGD') {
+          const { data: igdData, error: igdError } = await supabase
+            .from('pemeriksaan_igd_header')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .range(0, 4999);
+            
+          if (!igdError && igdData && igdData.length > 0) {
+            rawData = igdData;
+          } else {
+            const { data: rajalData } = await supabase
+              .from('kasir_rajal')
+              .select('*')
+              .order('created_at', { ascending: false })
+              .range(0, 4999);
+            if (rajalData) {
+              rawData = rajalData.filter((d: any) => 
+                (d.sumber_modul && d.sumber_modul.toUpperCase().includes('IGD')) ||
+                (d.poli_tujuan && d.poli_tujuan.toUpperCase().includes('IGD')) ||
+                (d.jenis_layanan && d.jenis_layanan.toUpperCase().includes('IGD'))
+              );
+            }
+          }
+        } else if (activeTab === 'RANAP') {
+          const { data, error } = await supabase
+            .from('kasir_ranap')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .range(0, 4999);
+          if (error) console.error('Supabase Ranap Fetch Error:', error);
+          if (!error && data && data.length > 0) rawData = data;
+        } else if (activeTab === 'OBAT') {
+          const { data, error } = await supabase
+            .from('rincian_obat_header')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .range(0, 4999);
+          if (error) console.error('Supabase Obat Fetch Error:', error);
+          if (!error && data && data.length > 0) rawData = data;
+        }
+      }
+
+      // 3. Normalisasi & Mapping Data ke KasirRecord
+      let results: KasirRecord[] = [];
+
+      if (activeTab === 'RAJAL') {
+        results = rawData.map((d) => ({
+          id: d.no_transaksi || d.no_kwitansi || d.id,
+          tanggal: d.tanggal_transaksi || d.tanggal_record || d.tanggal || d.created_at || d.tgl_transaksi || '',
+          no_rm: d.no_rm || d.norm || d.no_reg || d.no_rekam_medis || '-',
+          nama_pasien: d.nama_pasien || d.pasien_nama || d.nama || 'Tanpa Nama',
+          unit_detail: d.poli_tujuan || d.nama_poli || d.ruang || d.poli || 'Poli Umum',
+          penjamin: d.jenis_penjaminan || d.penjaminan || d.penjamin || d.cara_bayar || d.jenis_pasien || d.penjamin_nama || d.kelompok_pasien || d.metode_bayar || 'UMUM',
+          total_biaya: Number(d.total_biaya ?? d.total_nominal ?? d.total_tarif ?? d.total_bayar ?? 0),
+          status: d.status_bayar || d.status_verifikasi || d.status || 'lunas',
+          sumber: 'RAJAL',
+          petugas_nama: d.petugas_input_nama || d.petugas_nama || 'Petugas Kasir',
+          metode_pembayaran: d.metode_pembayaran || d.metode_bayar || 'TUNAI'
+        }));
+      } 
+      else if (activeTab === 'IGD') {
+        results = rawData.map((d) => ({
+          id: d.no_transaksi || d.no_kwitansi || (String(d.id).startsWith('IGD-') ? d.id : `IGD-${d.id}`) || d.id,
+          tanggal: d.tanggal_pemeriksaan || d.tanggal_record || d.tanggal_transaksi || d.created_at || '',
+          no_rm: d.no_rm || d.norm || d.no_reg || d.no_rekam_medis || '-',
+          nama_pasien: d.nama_pasien || d.pasien_nama || d.nama || 'Tanpa Nama',
+          unit_detail: (d.triase || d.dokter_pemeriksa) ? `Triase: ${d.triase || 'Hijau'} (${d.dokter_pemeriksa || 'Dokter Jaga'})` : (d.poli_tujuan || d.ruang || 'IGD / Gawat Darurat'),
+          penjamin: d.penjaminan || d.jenis_penjaminan || d.penjamin || d.cara_bayar || d.jenis_pasien || d.penjamin_nama || d.metode_bayar || 'UMUM',
+          total_biaya: Number(d.total_biaya ?? d.total_nominal ?? d.total_tarif ?? d.total_keseluruhan ?? d.total_bayar ?? 0),
+          status: d.status_bayar || d.status_verifikasi || d.status || 'lunas',
+          sumber: 'IGD',
+          petugas_nama: d.petugas_nama || d.petugas_input_nama || 'Petugas Kasir',
+          metode_pembayaran: d.metode_pembayaran || d.metode_bayar || 'TUNAI'
+        }));
+      }
+      else if (activeTab === 'RANAP') {
+        results = rawData.map((d) => ({
+          id: d.no_transaksi || d.no_kwitansi || d.id,
+          tanggal: d.masuk_tgl || d.tanggal_record || d.created_at || '',
+          no_rm: d.no_rm || d.no_reg || d.norm || '-',
+          nama_pasien: d.nama_pasien || d.pasien_nama || d.nama || 'Tanpa Nama',
+          unit_detail: `Ruang: ${d.ruang || '-'} | Dr: ${d.dokter_merawat || '-'}`,
+          penjamin: d.penjaminan || d.jenis_penjaminan || d.penjamin || d.cara_bayar || d.jenis_pasien || (d.no_sep_bpjs ? 'BPJS Kesehatan' : 'UMUM'),
+          total_biaya: Number(d.total_biaya_ranap ?? d.total_biaya ?? d.total_nominal ?? d.total_tarif ?? 0),
+          status: d.status_verifikasi || d.status_bayar || d.status || 'lunas',
+          sumber: 'RANAP',
+          petugas_nama: d.petugas_nama || d.petugas_input_nama || 'Petugas Kasir',
+          metode_pembayaran: d.metode_pembayaran || d.metode_bayar || 'TRANSFER'
+        }));
+      }
+      else if (activeTab === 'OBAT') {
+        results = rawData.map((d) => ({
+          id: d.no_transaksi || d.no_kwitansi || d.id,
+          tanggal: d.tanggal_record || d.created_at || d.tanggal_transaksi || '',
+          no_rm: d.no_rm || d.norm || '-',
+          nama_pasien: d.nama_pasien || d.pasien_nama || d.nama || 'Tanpa Nama',
+          unit_detail: `Apotek Resep (${d.no_transaksi || d.no_resep || '-'})`,
+          penjamin: d.penjamin || d.penjaminan || d.jenis_penjaminan || d.cara_bayar || d.jenis_pasien || 'UMUM',
+          total_biaya: Number(d.total_biaya ?? d.total_nominal ?? d.total_tarif ?? 0),
+          status: d.status_verifikasi || d.status_bayar || d.status || 'lunas',
+          sumber: 'OBAT',
+          petugas_nama: d.petugas_nama || d.petugas_input_nama || 'Petugas Kasir',
+          metode_pembayaran: d.metode_pembayaran || d.metode_bayar || 'TUNAI'
+        }));
+      }
+
+      setDataList(results);
+    } catch (err: any) {
+      if (err.name === 'AbortError') return;
+      console.error('Gagal mengambil data kasir via API/Supabase:', err);
+      setErrorMessage('Terjadi kesalahan jaringan atau server tidak merespons.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    fetchKasirData();
+  }, [fetchKasirData]);
+
+  // Global Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -175,108 +353,6 @@ export default function PusatCetakKasir() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
-
-  // Fetch data dari API Backend Route sesuai tab aktif dengan AbortController
-  const fetchKasirData = useCallback(async () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-
-    setIsLoading(true);
-    setErrorMessage(null);
-    setSelectedIds([]); 
-    setCurrentPage(1);
-    try {
-      const response = await fetch(`/api/kasir/pusat-cetak?jenis_layanan=${activeTab}`, { signal: controller.signal });
-      const result = await response.json();
-
-      if (result.success) {
-        let results: KasirRecord[] = [];
-        const rawData: RawKasirItem[] = result.data || [];
-
-        if (activeTab === 'RAJAL') {
-          results = rawData.map((d) => ({
-            id: d.id,
-            tanggal: d.tanggal_transaksi || d.tanggal || d.created_at || '',
-            no_rm: d.no_rm || '-',
-            nama_pasien: d.nama_pasien || 'Tanpa Nama',
-            unit_detail: d.poli_tujuan || 'Poli Umum',
-            penjamin: d.jenis_penjaminan || d.metode_bayar || 'UMUM',
-            total_biaya: d.total_biaya || d.total_bayar || 0,
-            status: d.status_bayar || 'pending',
-            sumber: 'RAJAL',
-            petugas_nama: d.petugas_input_nama || 'Petugas Kasir',
-            metode_pembayaran: d.metode_pembayaran || 'TUNAI'
-          }));
-        } 
-        else if (activeTab === 'IGD') {
-          results = rawData.map((d) => ({
-            id: d.id,
-            tanggal: d.created_at || d.tanggal_pemeriksaan || '',
-            no_rm: d.no_rm || '-',
-            nama_pasien: d.nama_pasien || 'Tanpa Nama',
-            unit_detail: `Triase: ${d.triase || 'Hijau'} (${d.dokter_pemeriksa || 'Dokter Jaga'})`,
-            penjamin: d.penjaminan || d.metode_bayar || 'UMUM',
-            total_biaya: d.total_biaya || d.total_keseluruhan || 0,
-            status: d.status_bayar || d.status_verifikasi || 'pending',
-            sumber: 'IGD',
-            petugas_nama: d.petugas_nama || 'Petugas Kasir',
-            metode_pembayaran: d.metode_pembayaran || 'TUNAI'
-          }));
-        }
-        else if (activeTab === 'RANAP') {
-          results = rawData.map((d) => ({
-            id: d.id,
-            tanggal: d.masuk_tgl || d.created_at || '',
-            no_rm: d.no_reg || '-',
-            nama_pasien: d.nama_pasien || 'Tanpa Nama',
-            unit_detail: `Ruang: ${d.ruang || '-'} | Dr: ${d.dokter_merawat || '-'}`,
-            penjamin: d.no_sep_bpjs ? 'BPJS Kesehatan' : 'UMUM',
-            total_biaya: d.total_biaya_ranap || d.total_biaya || 0, 
-            status: d.status_verifikasi || 'pending',
-            sumber: 'RANAP',
-            petugas_nama: d.petugas_nama || 'Petugas Kasir',
-            metode_pembayaran: d.metode_pembayaran || 'TRANSFER'
-          }));
-        }
-        else if (activeTab === 'OBAT') {
-          results = rawData.map((d) => ({
-            id: d.id,
-            tanggal: d.created_at || '',
-            no_rm: d.no_rm || '-',
-            nama_pasien: d.nama_pasien || 'Tanpa Nama',
-            unit_detail: `Apotek Resep (${d.no_transaksi || '-'})`,
-            penjamin: d.penjamin || 'UMUM',
-            total_biaya: d.total_biaya || 0,
-            status: d.status_verifikasi || d.status_bayar || 'pending',
-            sumber: 'OBAT',
-            petugas_nama: d.petugas_nama || 'Petugas Kasir',
-            metode_pembayaran: d.metode_pembayaran || 'TUNAI'
-          }));
-        }
-
-        setDataList(results);
-      } else {
-        setErrorMessage(result.error || 'Gagal memuat data dari server.');
-        setDataList([]);
-      }
-    } catch (err: any) {
-      if (err.name === 'AbortError') {
-        console.log('Fetch kasir dibatalkan untuk efisiensi.');
-        return;
-      }
-      console.error('Gagal mengambil data kasir via API:', err);
-      setErrorMessage('Terjadi kesalahan jaringan atau server tidak merespons.');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [activeTab]);
-
-  useEffect(() => {
-    fetchKasirData();
   }, [fetchKasirData]);
 
   // Daftar unik nama petugas
@@ -333,14 +409,13 @@ export default function PusatCetakKasir() {
     setCurrentPage(1);
   };
 
-  // Fitur Aksi Pelunasan Cepat (Quick Pay) Langsung
   const handleQuickMarkLunas = (id: string | number) => {
     setDataList(prev => prev.map(item => item.id === id ? { ...item, status: 'lunas' } : item));
     showToast(`Transaksi #${id} berhasil dilunasi secara instan.`);
     ingestAuditLog('QUICK_PAY_LUNAS', String(id), `Transaction marked as paid instantly.`);
   };
 
-  // Filter Data (Optimized with useMemo)
+  // Filter Data
   const filteredData = useMemo(() => {
     return dataList.filter(item => {
       const matchesSearch = 
@@ -350,16 +425,28 @@ export default function PusatCetakKasir() {
         
       let matchesStatus = true;
       if (statusFilter === 'LUNAS') {
-        matchesStatus = !!(item.status?.toLowerCase().includes('lunas') || item.status?.toLowerCase().includes('verified'));
+        matchesStatus = !!(
+          item.status?.toLowerCase().includes('lunas') || 
+          item.status?.toLowerCase().includes('verified') ||
+          item.status?.toLowerCase().includes('disetujui') ||
+          item.status?.toLowerCase().includes('selesai') ||
+          item.status?.toLowerCase().includes('sudah')
+        );
       } else if (statusFilter === 'PENDING') {
-        matchesStatus = !!(!(item.status?.toLowerCase().includes('lunas') || item.status?.toLowerCase().includes('verified')));
+        matchesStatus = !!(!(
+          item.status?.toLowerCase().includes('lunas') || 
+          item.status?.toLowerCase().includes('verified') ||
+          item.status?.toLowerCase().includes('disetujui') ||
+          item.status?.toLowerCase().includes('selesai') ||
+          item.status?.toLowerCase().includes('sudah')
+        ));
       }
 
       let matchesPenjamin = true;
       if (penjaminFilter === 'BPJS') {
-        matchesPenjamin = item.penjamin?.toLowerCase().includes('bpjs');
+        matchesPenjamin = item.penjamin?.toLowerCase().includes('bpjs') || item.penjamin?.toLowerCase().includes('jkn');
       } else if (penjaminFilter === 'UMUM') {
-        matchesPenjamin = !item.penjamin?.toLowerCase().includes('bpjs');
+        matchesPenjamin = !(item.penjamin?.toLowerCase().includes('bpjs') || item.penjamin?.toLowerCase().includes('jkn'));
       }
 
       let matchesMetode = true;
@@ -396,7 +483,7 @@ export default function PusatCetakKasir() {
     });
   }, [dataList, searchTerm, statusFilter, penjaminFilter, metodeBayarFilter, petugasFilter, shiftFilter, startDate, endDate]);
 
-  // Sorting Logic (Optimized with useMemo)
+  // Sorting Logic
   const sortedData = useMemo(() => {
     return [...filteredData].sort((a, b) => {
       let valA: any = a[sortField];
@@ -428,7 +515,7 @@ export default function PusatCetakKasir() {
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
   const currentPaginatedData = sortedData.slice(indexOfFirstItem, indexOfLastItem);
 
-  // Handler Centang Baris (Global / Select All Filtered)
+  // Handler Centang Baris
   const handleToggleSelectAll = () => {
     const allFilteredIds = filteredData.map(item => item.id);
     const allSelected = allFilteredIds.every(id => selectedIds.includes(id));
@@ -448,17 +535,22 @@ export default function PusatCetakKasir() {
     }
   };
 
-  // Hitung Metrik Ringkasan
+  // Metrik Ringkasan
   const totalNominalFiltered = useMemo(() => {
     return filteredData.reduce((acc, curr) => acc + (curr.total_biaya || 0), 0);
   }, [filteredData]);
 
   const totalLunasCount = useMemo(() => {
-    return filteredData.filter(i => i.status?.toLowerCase().includes('lunas') || i.status?.toLowerCase().includes('verified')).length;
+    return filteredData.filter(i => 
+      i.status?.toLowerCase().includes('lunas') || 
+      i.status?.toLowerCase().includes('verified') ||
+      i.status?.toLowerCase().includes('disetujui') ||
+      i.status?.toLowerCase().includes('selesai')
+    ).length;
   }, [filteredData]);
 
   const totalBpjsCount = useMemo(() => {
-    return filteredData.filter(i => i.penjamin?.toLowerCase().includes('bpjs')).length;
+    return filteredData.filter(i => i.penjamin?.toLowerCase().includes('bpjs') || i.penjamin?.toLowerCase().includes('jkn')).length;
   }, [filteredData]);
 
   const totalUmumCount = filteredData.length - totalBpjsCount;
@@ -471,7 +563,7 @@ export default function PusatCetakKasir() {
     setPrintLayoutType(layout);
     setSelectedRecord(record);
     setPrintCounts(prev => ({ ...prev, [record.id]: (prev[record.id] || 0) + 1 }));
-     
+      
     setPrintLogs(prev => [
       {
         id: record.id,
@@ -490,7 +582,6 @@ export default function PusatCetakKasir() {
     }, 300);
   };
 
-  // Aksi Cetak Rekapitulasi Laporan Massal
   const handlePrintRekap = () => {
     if (filteredData.length === 0) {
       setErrorMessage('Tidak ada data untuk dicetak sebagai rekap.');
@@ -518,7 +609,6 @@ export default function PusatCetakKasir() {
     }, 300);
   };
 
-  // Aksi Cetak Batch Terpilih
   const handlePrintBatch = () => {
     if (selectedIds.length === 0) {
       setErrorMessage('Pilih minimal satu data transaksi pada tabel untuk dicetak.');
@@ -546,7 +636,6 @@ export default function PusatCetakKasir() {
     }, 300);
   };
 
-  // Aksi Cetak Laporan Serah Terima Shift Kasir
   const handlePrintShiftClosing = () => {
     setPrintMode('SHIFT_REPORT');
     setPrintLayoutType('A4');
@@ -570,13 +659,12 @@ export default function PusatCetakKasir() {
     }, 300);
   };
 
-  // Fitur Ekspor ke Format Excel Asli (.xls) dengan Audit Log Ingestion
   const handleExportExcel = () => {
     if (filteredData.length === 0) {
       setErrorMessage('Tidak ada data untuk diexport.');
       return;
     }
-     
+      
     let htmlContent = `
       <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
       <head><meta charset="utf-8"><title>Rekap Billing RSUD Bukit Kerman</title></head>
@@ -831,7 +919,7 @@ export default function PusatCetakKasir() {
         </div>
       )}
 
-      {/* MODAL PRATINJAU / PREVIEW STRUK */}
+      {/* MODAL PRATINJAU STRUK */}
       {previewRecord && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 print:hidden">
           <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200 animate-fadeIn flex flex-col max-h-[90vh]">
@@ -841,7 +929,7 @@ export default function PusatCetakKasir() {
                 <X className="w-5 h-5" />
               </button>
             </div>
-             
+              
             <div className="p-6 overflow-y-auto space-y-4 font-mono text-xs bg-slate-100/50">
               <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-2">
                 <div className="text-center font-bold pb-2 border-b border-dashed border-slate-300">
@@ -864,7 +952,6 @@ export default function PusatCetakKasir() {
                 </div>
               </div>
 
-              {/* INPUT CATATAN KAKI / PESAN KUSTOM PADA STRUK */}
               <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-2 font-sans">
                 <label className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5">
                   <MessageSquare className="w-3.5 h-3.5 text-teal-600" /> Catatan Tambahan Struk (Opsional)
@@ -902,7 +989,7 @@ export default function PusatCetakKasir() {
 
       <div className="max-w-7xl mx-auto w-full space-y-6 p-6 md:p-10 flex-1 print:hidden">
           
-        {/* NAVIGASI & KETERANGAN */}
+        {/* NAVIGASI HEADER */}
         <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div className="space-y-1">
             <button onClick={() => router.push('/kasir')} className="text-xs font-bold text-teal-600 hover:text-teal-700 flex items-center gap-1 cursor-pointer">
@@ -918,7 +1005,7 @@ export default function PusatCetakKasir() {
                 <HelpCircle className="w-4 h-4" />
               </button>
             </div>
-            <p className="text-xs text-slate-500 font-medium">Modul operasional pencetakan struk pembayaran, rincian obat, IGD, dan rawat inap via Backend API.</p>
+            <p className="text-xs text-slate-500 font-medium">Modul operasional pencetakan struk pembayaran, rincian obat, IGD, dan rawat inap via Backend API &amp; Supabase Direct Integration.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button 
@@ -945,7 +1032,7 @@ export default function PusatCetakKasir() {
           </div>
         </div>
 
-        {/* NOTIFIKASI ERROR / ALERT JIKA ADA DENGAN TOMBOL COBA LAGI */}
+        {/* NOTIFIKASI ERROR / ALERT */}
         {errorMessage && (
           <div className="bg-rose-50 border border-rose-200 text-rose-800 px-5 py-3 rounded-2xl text-xs font-bold flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm animate-fadeIn">
             <div className="flex items-center gap-2">
@@ -985,7 +1072,7 @@ export default function PusatCetakKasir() {
           ))}
         </div>
 
-        {/* KARTU STATISTIK & ANALITIK PENJAMIN */}
+        {/* KARTU STATISTIK */}
         <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
           <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
             <div className="p-3 bg-teal-50 text-teal-700 rounded-xl"><DollarSign className="w-6 h-6" /></div>
@@ -1008,7 +1095,7 @@ export default function PusatCetakKasir() {
               <h3 className="text-xs font-bold text-slate-700">BPJS: {totalBpjsCount} | Umum: {totalUmumCount}</h3>
             </div>
           </div>
-           
+            
           <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between gap-2">
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-bold text-slate-400 uppercase">Aksi Laporan</span>
@@ -1054,7 +1141,7 @@ export default function PusatCetakKasir() {
           </div>
         )}
 
-        {/* SEARCH, STATUS FILTER, PENJAMIN, PETUGAS, SHIFT & DATE RANGE */}
+        {/* SEARCH & FILTER AREA */}
         <div className="bg-white border border-slate-200 rounded-3xl shadow-xl overflow-hidden">
           <div className="p-4 border-b border-slate-100 flex flex-col lg:flex-row items-center justify-between gap-3 bg-slate-50/50">
             <div className="flex flex-col sm:flex-row flex-wrap items-center gap-3 w-full">
@@ -1123,7 +1210,6 @@ export default function PusatCetakKasir() {
                 ))}
               </select>
 
-              {/* Tanggal & Pintasan Diperluas */}
               <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                 <div className="flex items-center gap-1.5 bg-white border border-slate-200 px-3 py-1.5 rounded-xl text-xs">
                   <Calendar className="w-3.5 h-3.5 text-slate-400" />
@@ -1237,7 +1323,7 @@ export default function PusatCetakKasir() {
                 ) : (
                   currentPaginatedData.map(item => {
                     const isSelected = selectedIds.includes(item.id);
-                    const isLunas = item.status?.toLowerCase().includes('lunas') || item.status?.toLowerCase().includes('verified');
+                    const isLunas = item.status?.toLowerCase().includes('lunas') || item.status?.toLowerCase().includes('verified') || item.status?.toLowerCase().includes('disetujui');
                     const printCount = printCounts[item.id] || 0;
                     return (
                       <tr key={item.id} className={`hover:bg-slate-50 transition ${isSelected ? 'bg-teal-50/40' : ''}`}>
@@ -1303,7 +1389,7 @@ export default function PusatCetakKasir() {
                               </button>
                               <button
                                 onClick={() => handlePrintRecord(item, 'THERMAL')}
-                                className="px-2.5 py-2 bg-teal-700 hover:bg-teal-800 text-white rounded-xl font-bold text-xs transition cursor-pointer shadow-sm"
+                                className="px-2.5 py-2 bg-teal-700 hover:bg-teal-800 text-white rounded-xl text-xs font-bold transition cursor-pointer shadow-sm"
                                 title="Cetak Struk Thermal 80mm"
                               >
                                 Thermal
@@ -1324,7 +1410,7 @@ export default function PusatCetakKasir() {
             </table>
           </div>
 
-          {/* KONTROL PAGINASI TABEL */}
+          {/* PAGINASI */}
           {!isLoading && filteredData.length > 0 && (
             <div className="p-4 bg-slate-50/80 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs font-medium text-slate-600">
               <div className="flex items-center gap-2">
@@ -1368,12 +1454,8 @@ export default function PusatCetakKasir() {
 
       </div>
 
-      {/* ========================================================= */}
-      {/* TEMPLATE PRINT: OPTIMASI THERMAL, A4, & SHIFT CLOSING REPORT */}
-      {/* ========================================================= */}
+      {/* TEMPLATE PRINT */}
       <div className="hidden print:block print:w-full print:bg-white print:text-black print:m-0 print:p-0">
-          
-        {/* KOP SURAT (A4 / REKAP / SHIFT REPORT) */}
         {((printMode === 'SINGLE' && printLayoutType === 'A4') || printMode === 'REKAP' || printMode === 'BATCH' || printMode === 'SHIFT_REPORT') && (
           <div className="border-b-4 border-double border-black pb-3 mb-4 flex items-center justify-between gap-4 font-serif text-[10pt]">
             <div className="w-16 h-16 flex-shrink-0 flex items-center justify-center">
@@ -1392,7 +1474,6 @@ export default function PusatCetakKasir() {
           </div>
         )}
 
-        {/* KOP KHUSUS STRUK THERMAL 80MM */}
         {printMode === 'SINGLE' && printLayoutType === 'THERMAL' && (
           <div className="text-center space-y-0.5 pb-1 mb-1 border-b border-dashed border-black font-mono text-[7.5pt]">
             <div className="w-10 h-10 mx-auto mb-0.5 flex items-center justify-center">
@@ -1404,10 +1485,8 @@ export default function PusatCetakKasir() {
           </div>
         )}
 
-        {/* KONDISI 1: CETAK STRUK / BILLING SATUAN TERPILIH */}
         {printMode === 'SINGLE' && selectedRecord && (
           <div className={`${printLayoutType === 'THERMAL' ? 'w-[74mm] mx-auto space-y-1 text-[7.5pt] font-mono leading-tight' : 'max-w-xl mx-auto space-y-4 relative pt-2 font-serif text-[10pt]'}`}>
-              
             {printLayoutType === 'A4' && (
               <div className="absolute top-12 right-6 border-2 border-black px-4 py-1.5 rounded rotate-[-10deg] pointer-events-none opacity-80">
                 <span className="text-xs font-black uppercase tracking-widest font-mono">
@@ -1476,7 +1555,6 @@ export default function PusatCetakKasir() {
           </div>
         )}
 
-        {/* KONDISI 2: LAPORAN SERAH TERIMA SHIFT KASIR (SHIFT CLOSING REPORT) */}
         {printMode === 'SHIFT_REPORT' && (
           <div className="space-y-4 font-serif text-[10pt]">
             <div className="text-center font-bold py-1 space-y-1">
@@ -1522,7 +1600,6 @@ export default function PusatCetakKasir() {
           </div>
         )}
 
-        {/* KONDISI 3: CETAK REKAPITULASI LAPORAN MASSAL / BATCH */}
         {(printMode === 'REKAP' || printMode === 'BATCH') && (
           <div className="space-y-4 font-serif text-[10pt]">
             <div className="text-center font-bold py-1 space-y-1">
@@ -1595,7 +1672,6 @@ export default function PusatCetakKasir() {
             </div>
           </div>
         )}
-
       </div>
 
       {/* FOOTER KASIR */}

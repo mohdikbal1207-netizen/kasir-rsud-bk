@@ -346,6 +346,53 @@ export default function KasirRincianObatPage() {
     document.body.removeChild(link);
   };
 
+  // FITUR BARU: EKSPOR FORMAT EXCEL (.XLSX)
+  const handleExportXLSX = async () => {
+    if (records.length === 0) return alert('Tidak ada data untuk diekspor.');
+
+    try {
+      const XLSX = await import('xlsx');
+
+      const exportData = records.map((r, index) => ({
+        'No': index + 1,
+        'No. Transaksi': r.no_transaksi,
+        'Tanggal': new Date(r.created_at).toLocaleDateString('id-ID'),
+        'No. RM': r.no_rm,
+        'Nama Pasien': r.nama_pasien,
+        'Jenis Layanan': r.jenis_layanan,
+        'Penjamin': r.penjamin || 'Umum / Mandiri',
+        'Diskon (Rp)': r.diskon || 0,
+        'Total Biaya (Rp)': r.total_biaya,
+        'Status Verifikasi': r.status_verifikasi,
+        'Penanggung Jawab': r.penanggung_jawab_apotek
+      }));
+
+      const worksheet = XLSX.utils.json_to_sheet(exportData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Rekap Biaya Obat');
+
+      // Pengaturan lebar kolom otomatis
+      worksheet['!cols'] = [
+        { wch: 5 },   // No
+        { wch: 18 },  // No. Transaksi
+        { wch: 14 },  // Tanggal
+        { wch: 15 },  // No. RM
+        { wch: 25 },  // Nama Pasien
+        { wch: 15 },  // Jenis Layanan
+        { wch: 18 },  // Penjamin
+        { wch: 14 },  // Diskon
+        { wch: 18 },  // Total Biaya
+        { wch: 20 },  // Status Verifikasi
+        { wch: 25 }   // Penanggung Jawab
+      ];
+
+      XLSX.writeFile(workbook, `Rekap_Biaya_Obat_RSUD_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } catch (err) {
+      console.error('Gagal mengekspor data ke XLSX:', err);
+      alert('Gagal mengekspor data ke XLSX. Pastikan pustaka "xlsx" sudah terpasang (jalankan: npm install xlsx).');
+    }
+  };
+
   const handleCopySummary = (r: RincianObatRecord) => {
     const detailsText = r.rincian_obat_detail
       ?.map((d, i) => `${i + 1}. ${d.nama_obat_obhp} (${d.jumlah}x) - ${formatRupiah(d.subtotal)}`)
@@ -462,7 +509,7 @@ export default function KasirRincianObatPage() {
 
       <main className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-8 flex-1 space-y-6 print:p-0 print:max-w-none">
         
-        {/* TOP BAR ACTION (DIPERBARUI: TOMBOL CETAK REKAPAN & TERPILIH ADA DI SINI AGAR SELALU MUNCUL) */}
+        {/* TOP BAR ACTION */}
         <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 print:hidden">
           <div>
             <h1 className="text-xl font-black text-slate-900 tracking-tight flex items-center gap-2">
@@ -486,12 +533,25 @@ export default function KasirRincianObatPage() {
             >
               <Printer className="w-4 h-4 text-emerald-400" /> Cetak Semua Rekapan
             </button>
+            
+            {/* TOMBOL EKSPOR XLSX (EXCEL) */}
+            <button
+              onClick={handleExportXLSX}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3.5 py-2.5 rounded-2xl transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+              title="Ekspor data ke file Excel (.xlsx)"
+            >
+              <FileSpreadsheet className="w-4 h-4 text-white" /> Ekspor Excel (.xlsx)
+            </button>
+
+            {/* TOMBOL EKSPOR CSV */}
             <button
               onClick={handleExportCSV}
               className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs px-3.5 py-2.5 rounded-2xl transition flex items-center gap-1.5 cursor-pointer"
+              title="Ekspor data ke file CSV"
             >
-              <FileSpreadsheet className="w-4 h-4 text-emerald-600" /> Ekspor Data
+              <FileSpreadsheet className="w-4 h-4 text-emerald-600" /> Ekspor CSV
             </button>
+
             <button
               onClick={() => setIsFormOpen(true)}
               className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-4 py-2.5 rounded-2xl transition shadow-md flex items-center gap-2 cursor-pointer"

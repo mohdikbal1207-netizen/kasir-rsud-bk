@@ -1,13 +1,14 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
   FileText, CheckCircle2, Clock, XCircle, Search, 
   Printer, Eye, ShieldCheck, Database, Building2, ArrowLeft, X, 
   User, Calendar, AlertCircle, RefreshCw, MessageSquare, CheckSquare, Send,
-  Download, Square, Layers, Banknote, ArrowUpDown, Filter, BarChart3, RotateCcw, ChevronLeft, ChevronRight, Zap, Stethoscope
+  Download, Square, Layers, Banknote, ArrowUpDown, Filter, BarChart3, RotateCcw, ChevronLeft, ChevronRight, Zap, Stethoscope, FileSpreadsheet
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { supabase } from '@/lib/supabase';
 import AdminHeader from '@/components/admin/AdminHeader';
 import AdminFooter from '@/components/admin/AdminFooter';
@@ -93,7 +94,7 @@ const terbilang = (nilai: number): string => {
 export default function AdminRanapPage() {
   const router = useRouter();
   
-  // [OPTIMASI EGRESS & LOG INGESTION]: Ref AbortController untuk membatalkan query gantung/duplikat
+  // Ref AbortController untuk membatalkan query gantung/duplikat
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const [patientList, setPatientList] = useState<RanapHeader[]>([]);
@@ -160,9 +161,8 @@ export default function AdminRanapPage() {
     };
   }, [showActionModal, showDetailModal]);
 
-  // [OPTIMASI EGRESS & LOG INGESTION]: Menerapkan Server-Side Filtering dan Selective Column Fetching
-  const fetchRanapData = async () => {
-    // Batalkan request sebelumnya yang belum selesai untuk membersihkan log server
+  // Fetching data ranap dengan useCallback dan AbortSignal
+  const fetchRanapData = useCallback(async () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
@@ -177,7 +177,6 @@ export default function AdminRanapPage() {
         .order('created_at', { ascending: false })
         .abortSignal(controller.signal);
 
-      // Pindahkan filter ke sisi server agar database hanya mengembalikan row yang relevan (Menekan Egress)
       if (filterStatus !== 'ALL') {
         query = query.eq('status_verifikasi', filterStatus);
       }
@@ -202,7 +201,6 @@ export default function AdminRanapPage() {
       const { data: headers, error: headerErr } = await query;
       if (headerErr) throw headerErr;
 
-      // Ambil item hanya untuk no_reg yang ada di headers saat ini (Menekan Egress tabel item)
       const regNos = (headers || []).map((h: any) => h.no_reg);
       let allItems: any[] = [];
       if (regNos.length > 0) {
@@ -234,19 +232,35 @@ export default function AdminRanapPage() {
         setPatientList(formatted);
       }
     } catch (err: any) {
-      if (err.name === 'AbortError') {
+      const isAbortError = 
+        err?.name === 'AbortError' || 
+        err?.code === 20 ||
+        (typeof err?.message === 'string' && (
+          err.message.includes('AbortError') || 
+          err.message.includes('aborted') || 
+          err.message.includes('signal is aborted')
+        ));
+
+      if (isAbortError) {
         console.log('Fetch dibatalkan untuk efisiensi jaringan.');
         return;
       }
+
       console.error('Gagal mengambil data ranap:', err?.message || JSON.stringify(err));
     } finally {
       setLoading(false);
     }
-  };
+  }, [filterStatus, filterPenjaminan, filterRuang, filterDokter, startDate, endDate]);
 
   useEffect(() => {
     fetchRanapData();
-  }, [filterStatus, filterPenjaminan, filterRuang, filterDokter, startDate, endDate]);
+
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, [fetchRanapData]);
 
   const handleOpenDetail = async (patient: RanapHeader) => {
     setSelectedPatient(patient);
@@ -424,6 +438,52 @@ export default function AdminRanapPage() {
     }
   };
 
+  // Ekspor dalam Format XLSX (SheetJS)
+  const handleExportAdminXLSX = () => {
+    if (filteredPatients.length === 0) {
+      setModalNotif({
+        show: true,
+        type: 'warning',
+        title: 'Data Kosong',
+        message: 'Tidak ada data rekapitulasi yang dapat diekspor.'
+      });
+      return;
+    }
+
+    const dataToExport = filteredPatients.map((p, idx) => ({
+      'No': idx + 1,
+      'No. Registrasi': p.no_reg,
+      'Nama Pasien': p.nama_pasien,
+      'NIK Pasien': p.nik_pasien || '-',
+      'Umur': p.umur || '-',
+      'Alamat': p.alamat || '-',
+      'Ruangan': p.ruang || '-',
+      'Dokter Merawat': p.dokter_merawat || '-',
+      'Tgl Masuk': p.masuk_tgl ? new Date(p.masuk_tgl).toLocaleDateString('id-ID') : '-',
+      'Tgl Keluar': p.keluar_tgl ? new Date(p.keluar_tgl).toLocaleDateString('id-ID') : '-',
+      'Lama Rawat (Hari)': calculateLengthOfStay(p.masuk_tgl, p.keluar_tgl),
+      'Jenis Penjaminan': p.jenis_penjaminan || 'UMUM',
+      'Status Verifikasi': p.status_verifikasi || 'PENDING_VERIFIKASI',
+      'Total Biaya (Rp)': p.total_biaya || 0,
+      'Ditanggung BPJS/Pihak 3 (Rp)': p.total_ditanggung || 0,
+      'Selisih Bayar/Umum (Rp)': p.total_selisih || 0,
+      'Catatan Admin': p.catatan_admin || '-'
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Rekap Rawat Inap');
+
+    // Penyesuaian lebar kolom otomatis
+    const colWidths = Object.keys(dataToExport[0] || {}).map(key => ({
+      wch: Math.max(key.length + 3, 12)
+    }));
+    worksheet['!cols'] = colWidths;
+
+    XLSX.writeFile(workbook, `Laporan_Admin_Ranap_${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
+
+  // Ekspor CSV Tradisional
   const handleExportAdminCSV = () => {
     if (filteredPatients.length === 0) {
       setModalNotif({
@@ -437,7 +497,7 @@ export default function AdminRanapPage() {
 
     let csvContent = "data:text/csv;charset=utf-8,";
     csvContent += "No. Reg,Nama Pasien,NIK,Ruangan,Dokter,Penjaminan,Status Verifikasi,Total Biaya (Rp),Ditanggung BPJS (Rp),Selisih Umum (Rp)\n";
-     
+      
     filteredPatients.forEach(p => {
       const row = [
         p.no_reg,
@@ -491,7 +551,7 @@ export default function AdminRanapPage() {
       p.no_reg.toLowerCase().includes(searchTerm.toLowerCase()) ||
       p.ruang?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       p.dokter_merawat?.toLowerCase().includes(searchTerm.toLowerCase());
-     
+      
     return matchesSearch;
   }).sort((a, b) => {
     if (sortBy === 'highest_cost') {
@@ -895,7 +955,7 @@ export default function AdminRanapPage() {
             <div className="flex items-center space-x-3">
               <span className="text-xs text-slate-500 font-medium">
                 Menampilkan <strong className="text-slate-800">{filteredPatients.length}</strong> data sesuai filter aktif.
-            </span>
+              </span>
               
               <div className="flex items-center space-x-1 text-xs text-slate-600">
                 <span>Baris:</span>
@@ -913,11 +973,21 @@ export default function AdminRanapPage() {
 
             <div className="flex flex-wrap items-center gap-2">
               <button
+                onClick={handleExportAdminXLSX}
+                className="flex items-center space-x-1.5 bg-emerald-800 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-xl text-xs font-bold transition shadow-sm cursor-pointer"
+                title="Ekspor Laporan Format .xlsx"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <span>Ekspor Excel (.xlsx)</span>
+              </button>
+
+              <button
                 onClick={handleExportAdminCSV}
-                className="flex items-center space-x-1.5 bg-emerald-700 hover:bg-emerald-600 text-white px-3.5 py-2 rounded-xl text-xs font-bold transition shadow-sm cursor-pointer"
+                className="flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 py-2 rounded-xl text-xs font-bold transition shadow-sm cursor-pointer"
+                title="Ekspor Laporan Format CSV"
               >
                 <Download className="w-3.5 h-3.5" />
-                <span>Ekspor Rekap Excel</span>
+                <span>Ekspor CSV</span>
               </button>
 
               <button
@@ -1101,7 +1171,7 @@ export default function AdminRanapPage() {
       {/* ========================================================= */}
       {printMode === 'summary' && (
         <div className="hidden print:block font-sans text-slate-900 text-[10px] m-0 p-0 space-y-2 w-full">
-           
+            
           <div className="flex items-center justify-between border-b-4 border-double border-slate-900 pb-2 mb-2 px-1">
             <div className="w-14 h-14 flex-shrink-0 flex items-center justify-center">
               <img src="/logo-pemkab.png" alt="Logo Pemkab Kerinci" className="w-12 h-12 object-contain" />
@@ -1185,7 +1255,7 @@ export default function AdminRanapPage() {
       {/* ========================================================= */}
       {printMode === 'selected_summary' && (
         <div className="hidden print:block font-sans text-slate-900 text-[10px] m-0 p-0 space-y-2 w-full">
-           
+            
           <div className="flex items-center justify-between border-b-4 border-double border-slate-900 pb-2 mb-2 px-1">
             <div className="w-14 h-14 flex-shrink-0 flex items-center justify-center">
               <img src="/logo-pemkab.png" alt="Logo Pemkab Kerinci" className="w-12 h-12 object-contain" />
@@ -1262,7 +1332,7 @@ export default function AdminRanapPage() {
       {/* ========================================================= */}
       {printMode === 'single_bill' && singlePrintData && (
         <div className="hidden print:block font-sans text-slate-900 text-[10px] m-0 p-0 space-y-2 w-full">
-           
+            
           <div className="flex items-center justify-between border-b-4 border-double border-slate-900 pb-2 mb-2 px-1">
             <div className="w-14 h-14 flex-shrink-0 flex items-center justify-center">
               <img src="/logo-pemkab.png" alt="Logo Pemkab Kerinci" className="w-12 h-12 object-contain" />
@@ -1539,6 +1609,6 @@ export default function AdminRanapPage() {
         <AdminFooter />
       </div>
 
-  </div>
+    </div>
   );
 }

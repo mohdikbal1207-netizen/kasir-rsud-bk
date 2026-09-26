@@ -45,6 +45,85 @@ import { supabase } from '@/lib/supabase';
 import AdminHeader from '@/components/admin/AdminHeader';
 import AdminFooter from '@/components/admin/AdminFooter';
 
+// Peta Fallback Nama Tindakan Kasir IGD (Pencegahan jika lookup database master kosong)
+const fallbackTindakanMap: Record<number, string> = {
+  1: 'Jahit Luka - Kecil (1-5 jahitan)',
+  2: 'Jahit Luka - Sedang (6-15 jahitan)',
+  3: 'Jahit Luka - Besar (15-20 jahitan)',
+  4: 'Jahit Luka - Sangat Besar/Penyulit (>20 jahitan)',
+  5: 'Ekstraksi kuku',
+  6: 'Incisi Abses',
+  7: 'Angkat Peluru/gram',
+  8: 'Ekstraksi Corpus Alienum Mata',
+  9: 'Ekstraksi Corpus Alienum THT',
+  10: 'Debridement Luka Kecil',
+  11: 'Debridement Luka Digigit Binatang (Diluar Obat Anti Bisa)',
+  12: 'Pemasangan Dower Kateter',
+  13: 'Explorasi Luka (Tidak Tembus)',
+  14: 'Explorasi Luka Tusuk Paku',
+  15: 'Angkat Jahitan 1-10 Jahitan',
+  16: 'Pasang NGT',
+  17: 'Pasang IVFD (Infus)',
+  18: 'Bilas Lambung + dengan NGT',
+  19: 'Punctie Thorax',
+  20: 'Pasang Spalk Jari',
+  21: 'Pasang Spalk Tungkai Atas (Tangan)',
+  22: 'Pasang Spalk Tungkai Bawah (Kaki)',
+  23: 'Suctioning/isap lendir jalan nafas (pertindakan)',
+  24: 'Pemberian Stesolid',
+  25: 'Pasang Gips',
+  26: 'Anuscopy',
+  27: 'Rectal Toucher / Vagina Toucher',
+  28: 'Nebulizer Inhalation',
+  29: 'Resusitasi Jantung Paru Dewasa',
+  30: 'Resusitasi Jantung Paru Anak / Bayi',
+  31: 'Debridement Luka Bakar: 1-9%',
+  32: 'Debridement Luka Bakar: 9-18%',
+  33: 'Debridement Luka Bakar: 18-36%',
+  34: 'Debridement Luka Bakar: >36%',
+  35: 'Vena Sectio',
+  36: 'Pasang Tampon Hidung/ Epistaksis',
+  37: 'Pasang ETT (Endo Tracheal Tube)/ Intubasi',
+  38: 'DC Shock',
+  39: 'Ganti Perban',
+  40: 'Pasang Guide',
+  41: 'EKG',
+  42: 'Monitor Vital Sign',
+  43: 'Syringe Pump',
+  44: 'Infus Pump',
+  45: 'Glukotest',
+  46: 'Doppler',
+  47: 'Tracheostomi',
+  48: 'Spalk Kecil',
+  49: 'Spalk Sedang',
+  50: 'Spalk Besar',
+  51: 'Pasang spalk infus anak',
+  52: 'Konsul dokter Spesialis',
+  53: 'Infus Intra Osteus',
+  54: 'Infus Intra Umbilical',
+  55: 'ODC (One Day Care) diluar obat dan tindakan',
+  56: 'Irigasi mata',
+  57: 'Perawatan bayi baru lahir di UGD (Tali pusat)',
+  58: 'Incubator',
+  59: 'Bebat tekan luka',
+  60: 'Pasang elastis verban fraktur clavikula',
+  61: 'Pasang cervical collar',
+  62: 'Rectal Suppos',
+  63: 'Pasang elastis verband',
+  64: 'Reposisi Mandibula',
+  65: 'WSD (Chest Tube)',
+  66: 'Aspirasi cairan pleura',
+  67: 'Pasang stogger',
+  68: 'Pasang Katheter Urine',
+  69: 'Visum',
+  70: 'Pemeriksaan Surat Keterangan Klaim Asuransi',
+  71: 'Pungsi supra pubic',
+  72: 'Extubasi',
+  73: 'Pemasangan selimut pemanas',
+  74: 'Pasang Jackson Reis',
+  75: 'Pemasangan Oxymetri',
+};
+
 interface DetailItem {
   id: number;
   pemeriksaan_id: number;
@@ -207,7 +286,7 @@ export default function AdminIGDPage() {
     };
   };
 
-  // Optimasi Kueri Supabase (Seleksi Kolom Spesifik & Limit)
+  // Optimasi Kueri Supabase (Tanpa Kolom detail_pemeriksaan_igd.nama_tindakan yang Tidak Ada di DB)
   const fetchData = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -235,9 +314,7 @@ export default function AdminIGDPage() {
             tindakan_id,
             jumlah_qty,
             tarif_satuan,
-            subtotal,
-            nama_tindakan,
-            tindakan_igd ( nama_tindakan )
+            subtotal
           )
         `)
         .order('created_at', { ascending: false })
@@ -246,7 +323,71 @@ export default function AdminIGDPage() {
       if (error) throw new Error(error.message);
 
       if (data) {
-        const mapped: TransactionItem[] = data.map(mapHeaderToTransaction);
+        // Mengumpulkan tindakan_id untuk lookup nama_tindakan dari database master
+        const missingTindakanIds = new Set<number>();
+        data.forEach((header: any) => {
+          if (Array.isArray(header.detail_pemeriksaan_igd)) {
+            header.detail_pemeriksaan_igd.forEach((dt: any) => {
+              if (dt.tindakan_id) {
+                missingTindakanIds.add(dt.tindakan_id);
+              }
+            });
+          }
+        });
+
+        let tindakanMap: Record<number, string> = {};
+        if (missingTindakanIds.size > 0) {
+          try {
+            // Coba query ke master_tindakan_igd (sesuai tabel database) terlebih dahulu
+            const { data: listMaster } = await supabase
+              .from('master_tindakan_igd')
+              .select('id, nama_tindakan')
+              .in('id', Array.from(missingTindakanIds));
+
+            if (listMaster && listMaster.length > 0) {
+              listMaster.forEach((t: any) => {
+                tindakanMap[t.id] = t.nama_tindakan;
+              });
+            } else {
+              // Fallback query ke tindakan_igd jika ada
+              const { data: listTindakan } = await supabase
+                .from('tindakan_igd')
+                .select('id, nama_tindakan')
+                .in('id', Array.from(missingTindakanIds));
+
+              if (listTindakan) {
+                listTindakan.forEach((t: any) => {
+                  tindakanMap[t.id] = t.nama_tindakan;
+                });
+              }
+            }
+          } catch (e) {
+            console.warn('Lookup master_tindakan_igd terlewati:', e);
+          }
+        }
+
+        const mapped: TransactionItem[] = data.map((h: any) => {
+          const item = mapHeaderToTransaction(h);
+          if (item.detail_pemeriksaan_igd && item.detail_pemeriksaan_igd.length > 0) {
+            item.detail_pemeriksaan_igd = item.detail_pemeriksaan_igd.map((dt: any) => {
+              const nameResolved = 
+                dt.nama_tindakan || 
+                tindakanMap[dt.tindakan_id] || 
+                fallbackTindakanMap[dt.tindakan_id] || 
+                `Tindakan Medis #${dt.tindakan_id || dt.id}`;
+
+              return {
+                ...dt,
+                nama_tindakan: nameResolved,
+                tindakan_igd: {
+                  nama_tindakan: nameResolved
+                }
+              };
+            });
+          }
+          return item;
+        });
+
         setTransactions(mapped);
       } else {
         setTransactions([]);
@@ -263,7 +404,7 @@ export default function AdminIGDPage() {
     setIsLoading(false);
   }, []);
 
-  // Real-time Supabase Subscription (Dioptimalkan tanpa refetching penuh)
+  // Real-time Supabase Subscription
   useEffect(() => {
     fetchData();
 
@@ -1027,7 +1168,7 @@ export default function AdminIGDPage() {
           </div>
         )}
 
-        {/* DIV UTAMA DAFTAR TRANSAKSI DIBERI print:hidden */}
+        {/* DAFTAR TRANSAKSI */}
         <div className="print:hidden">
           {isLoading ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -1333,7 +1474,7 @@ export default function AdminIGDPage() {
           )}
         </div>
 
-        {/* PAGINATION CONTROLS (DIBERI print:hidden) */}
+        {/* PAGINATION CONTROLS */}
         {totalPages > 1 && itemsPerPage > 0 && (
           <div className="flex items-center justify-between bg-white border border-slate-200 rounded-2xl p-4 shadow-sm print:hidden">
             <p className="text-xs text-slate-500">
@@ -1359,12 +1500,9 @@ export default function AdminIGDPage() {
         )}
       </main>
 
-      {/* ======================================================== */}
       {/* KOP SURAT & FORMAT CETAK RESMI RSUD BUKIT KERMAN (PRINT ONLY) */}
-      {/* ======================================================== */}
       {printMode !== 'none' && (
         <div className="hidden print:block bg-white text-black p-6 font-sans w-full text-xs leading-normal print:p-0 print:m-0">
-          {/* KOP SURAT RESMI DENGAN LOGO GANDA */}
           <div className="flex items-center justify-between border-b-4 border-double border-black pb-4 mb-6">
             <div className="w-16 h-16 flex-shrink-0 flex items-center justify-center">
               <img src="/logo-pemkab.png" alt="Logo Pemkab" className="w-14 h-14 object-contain" onError={(e)=>{(e.target as HTMLElement).style.display='none'}} />
@@ -1467,7 +1605,7 @@ export default function AdminIGDPage() {
             </div>
           )}
 
-          {/* 3. CETAK KESELURUHAN DATA / REKAP SEMUA (CETAK REKAP SEMUA) */}
+          {/* 3. CETAK KESELURUHAN DATA / REKAP SEMUA */}
           {printMode === 'all' && (
             <div className="space-y-4">
               <div className="text-center space-y-1">
@@ -2015,7 +2153,6 @@ export default function AdminIGDPage() {
                   {selectedDetailRecord.status_bayar === 'lunas' ? 'Tervalidasi' :
                    (selectedDetailRecord.status_bayar === 'ditolak' || selectedDetailRecord.status_bayar === 'dibatalkan' || String(selectedDetailRecord.status_verifikasi).toLowerCase() === 'ditolak') ? 'Ditolak / Dibatalkan' : 'Dalam Pengecekan'}
                 </span>
-
               </div>
 
               <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 text-xs">
@@ -2060,7 +2197,7 @@ export default function AdminIGDPage() {
                       </thead>
                       <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
                         {selectedDetailRecord.detail_pemeriksaan_igd.map((item: any, index: number) => {
-                          const namaTindakan = item.tindakan_igd?.nama_tindakan || item.nama_tindakan || `Tindakan Medis #${item.tindakan_id || item.id}`;
+                          const namaTindakan = item.nama_tindakan || item.tindakan_igd?.nama_tindakan || fallbackTindakanMap[item.tindakan_id] || `Tindakan Medis #${item.tindakan_id || item.id}`;
                           return (
                             <tr key={item.id || index} className="hover:bg-slate-50/80">
                               <td className="p-2.5 text-center text-slate-400 font-bold">{index + 1}</td>

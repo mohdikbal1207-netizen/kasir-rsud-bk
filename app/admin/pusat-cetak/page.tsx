@@ -11,6 +11,7 @@ import {
 import { useRouter } from 'next/navigation';
 import AdminHeader from '@/components/admin/AdminHeader';
 import AdminFooter from '@/components/admin/AdminFooter';
+import { supabase } from '@/lib/supabase';
 
 interface AdminReportRecord {
   id: string | number;
@@ -38,14 +39,44 @@ interface PrintLogItem {
   petugas: string;
 }
 
+// FUNGSI NORMALISASI DATA DARI SUPABASE / API SUPAYA PRESISI SESUAI DATA ASLI (RAJUL, OBAT, & IGD)
+const normalizeRecord = (r: any): AdminReportRecord => {
+  // Deteksi modul IGD dari properti khusus IGD (triase, dokter_pemeriksa, pemeriksaan_igd)
+  const isIgd = r.sumber_modul === 'IGD' || r.triase !== undefined || String(r.id).startsWith('IGD-') || r.dokter_pemeriksa !== undefined;
+  
+  let modul = r.sumber_modul || r.jenis_layanan || r.modul;
+  if (!modul) {
+    if (isIgd) modul = 'IGD';
+    else modul = 'Rawat Jalan';
+  }
+
+  return {
+    id: r.no_transaksi || r.no_kwitansi || (isIgd && !String(r.id).startsWith('IGD-') ? `IGD-${r.id}` : r.id) || `TX-${Math.floor(100000 + Math.random() * 900000)}`,
+    tanggal_record: r.tanggal_record || r.tanggal_pemeriksaan || r.created_at || r.tanggal_transaksi || r.tgl_transaksi || new Date().toISOString(),
+    no_rm: r.no_rm || r.norm || r.no_rekam_medis || '',
+    no_reg: r.no_reg || r.noreg || '',
+    nama_pasien: r.nama_pasien || r.pasien_nama || r.nama || 'Tanpa Nama',
+    sumber_modul: modul,
+    poli_tujuan: r.poli_tujuan || r.ruang || r.nama_poli || r.dokter_pemeriksa || r.keterangan || r.poli || (isIgd ? 'IGD / Gawat Darurat' : '-'),
+    ruang: r.ruang || '',
+    penjaminan: r.penjaminan || r.jenis_penjaminan || r.penjamin || 'UMUM',
+    jenis_penjaminan: r.jenis_penjaminan || '',
+    penjamin: r.penjamin || r.penjaminan || 'UMUM',
+    total_nominal: Number(r.total_nominal ?? r.total_biaya ?? r.total_tarif ?? r.total_bayar ?? 0),
+    status_bayar: r.status_bayar || r.status || 'LUNAS',
+    status_verifikasi: r.status_verifikasi || 'Disetujui',
+    metode_bayar: r.metode_bayar || r.metode_pembayaran || 'Tunai',
+  };
+};
+
 export default function PusatCetakAdmin() {
   const router = useRouter();
   const searchInputRef = useRef<HTMLInputElement>(null);
    
-  // [OPTIMASI EGRESS & LOG INGESTION]: Ref untuk AbortController guna membatalkan request duplikat/gantung
+  // Ref untuk AbortController guna membatalkan request duplikat/gantung
   const abortControllerRef = useRef<AbortController | null>(null);
   
-  // [OPTIMASI EGRESS & LOG INGESTION]: Ref Throttle untuk mencegah spam penulisan log ke server/database agar tidak bengkak
+  // Ref Throttle untuk mencegah spam penulisan log ke server/database
   const lastLogTimestampRef = useRef<{ [key: string]: number }>({});
 
   const [dataList, setDataList] = useState<AdminReportRecord[]>([]);
@@ -120,18 +151,14 @@ export default function PusatCetakAdmin() {
       const now = Date.now();
       const lastTime = lastLogTimestampRef.current[logKey] || 0;
       
-      // Throttle 3 detik untuk mencegah lonjakan/spam penulisan log
       if (now - lastTime < 3000) return;
       lastLogTimestampRef.current[logKey] = now;
 
-      // Non-blocking background log transmission ke server (jika endpoint tersedia)
       fetch('/api/admin/audit-log', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action_type: actionType, target_id: targetId, description, timestamp: new Date().toISOString() })
-      }).catch(() => {
-        // Fallback aman jika endpoint audit belum aktif sepenuhnya
-      });
+      }).catch(() => {});
     } catch (err) {
       console.warn('Audit Log Notice:', err);
     }
@@ -156,7 +183,7 @@ export default function PusatCetakAdmin() {
     }
   }, [sortField]);
 
-  // [OPTIMASI EGRESS & LOG INGESTION]: Meneruskan semua filter ke parameter API agar database memfilter di server
+  // SINKRONISASI DATA PASIEN PRESISI DENGAN SUPABASE (TERMASUK KASIR IGD)
   const fetchAdminReportData = useCallback(async () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -175,23 +202,53 @@ export default function PusatCetakAdmin() {
       if (statusBayarFilter !== 'semua') url += `&status_bayar=${statusBayarFilter}`;
       if (metodeBayarFilter !== 'semua') url += `&metode_bayar=${metodeBayarFilter}`;
 
-      const response = await fetch(url, { signal: controller.signal });
-      const result = await response.json();
+      let fetchedData: AdminReportRecord[] = [];
 
-      if (result.success) {
-        setDataList(result.data || []);
-        setSummary(result.summary || { totalTransaksi: 0, grandTotalPendapatan: 0 });
-        showToast('Data laporan berhasil disinkronkan.');
-      } else {
-        console.error('Gagal memuat laporan admin:', result.error);
-        setDataList([]);
-        showToast(`Gagal memuat data: ${result.error || 'Kesalahan Server'}`);
+      try {
+        const response = await fetch(url, { signal: controller.signal });
+        const result = await response.json();
+        if (result.success && Array.isArray(result.data) && result.data.length > 0) {
+          fetchedData = result.data.map(normalizeRecord);
+        }
+      } catch (err) {
+        console.warn('Endpoint API bermasalah, mengambil langsung dari tabel Supabase...');
       }
+
+      // FALLBACK DIRECT SUPABASE QUERY: Termasuk tabel pemeriksaan_igd_header untuk data IGD
+      if (fetchedData.length === 0) {
+        const queries = [
+          supabase.from('kasir_rajal').select('*').order('created_at', { ascending: false }),
+          supabase.from('rincian_obat_header').select('*').order('created_at', { ascending: false }),
+          supabase.from('pemeriksaan_igd_header').select('*').order('created_at', { ascending: false }),
+          supabase.from('kasir_ranap').select('*').order('created_at', { ascending: false })
+        ];
+
+        const [rajalRes, obatRes, igdRes, ranapRes] = await Promise.allSettled(queries);
+        let rawList: any[] = [];
+
+        if (rajalRes.status === 'fulfilled' && rajalRes.value.data) {
+          rawList = [...rawList, ...rajalRes.value.data.map(item => ({ ...item, sumber_modul: 'Rawat Jalan' }))];
+        }
+        if (obatRes.status === 'fulfilled' && obatRes.value.data) {
+          rawList = [...rawList, ...obatRes.value.data.map(item => ({ ...item, sumber_modul: 'Apotek / Obat' }))];
+        }
+        if (igdRes.status === 'fulfilled' && igdRes.value.data) {
+          rawList = [...rawList, ...igdRes.value.data.map(item => ({ ...item, sumber_modul: 'IGD' }))];
+        }
+        if (ranapRes.status === 'fulfilled' && ranapRes.value.data) {
+          rawList = [...rawList, ...ranapRes.value.data.map(item => ({ ...item, sumber_modul: 'Rawat Inap' }))];
+        }
+
+        fetchedData = rawList.map(normalizeRecord);
+      }
+
+      setDataList(fetchedData);
+      const totalSum = fetchedData.reduce((acc, curr) => acc + curr.total_nominal, 0);
+      setSummary({ totalTransaksi: fetchedData.length, grandTotalPendapatan: totalSum });
+      showToast('Data laporan berhasil disinkronkan presisi.');
+
     } catch (err: any) {
-      if (err.name === 'AbortError') {
-        console.log('Fetch dibatalkan untuk efisiensi.');
-        return;
-      }
+      if (err.name === 'AbortError') return;
       console.error('Kesalahan jaringan saat mengambil laporan admin:', err);
       showToast('Koneksi terputus. Gagal memuat laporan admin.');
     } finally {
@@ -299,12 +356,20 @@ export default function PusatCetakAdmin() {
 
   const filteredData = useMemo(() => {
     return dataList.filter(item => {
+      // Filter Jenis Layanan / Modul Unit
+      const modStr = (item.sumber_modul || '').toLowerCase();
+      let matchLayanan = true;
+      if (jenisLayanan === 'igd') matchLayanan = modStr.includes('igd') || modStr.includes('gawat');
+      else if (jenisLayanan === 'rawat_jalan') matchLayanan = modStr.includes('rajal') || modStr.includes('jalan');
+      else if (jenisLayanan === 'ranap') matchLayanan = modStr.includes('ranap') || modStr.includes('inap');
+      else if (jenisLayanan === 'obat') matchLayanan = modStr.includes('obat') || modStr.includes('apotek');
+
       const matchSearch = 
         item.nama_pasien?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         item.no_rm?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         item.no_reg?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         String(item.id).toLowerCase().includes(searchTerm.toLowerCase());
-       
+        
       const penjaminStr = (item.penjaminan || item.jenis_penjaminan || item.penjamin || 'UMUM').toUpperCase();
       let matchPenjamin = true;
       if (penjaminFilter === 'bpjs') matchPenjamin = penjaminStr.includes('BPJS');
@@ -322,9 +387,9 @@ export default function PusatCetakAdmin() {
         matchMetode = metodeStr.includes(metodeBayarFilter.toUpperCase());
       }
 
-      return matchSearch && matchPenjamin && matchStatusBayar && matchMetode;
+      return matchLayanan && matchSearch && matchPenjamin && matchStatusBayar && matchMetode;
     });
-  }, [dataList, searchTerm, penjaminFilter, statusBayarFilter, metodeBayarFilter]);
+  }, [dataList, jenisLayanan, searchTerm, penjaminFilter, statusBayarFilter, metodeBayarFilter]);
 
   const unitBreakdown = useMemo(() => {
     const breakdown: { [key: string]: { count: number; total: number } } = {};
@@ -352,11 +417,11 @@ export default function PusatCetakAdmin() {
   const executiveInsightText = useMemo(() => {
     const entries = Object.entries(unitBreakdown.breakdown);
     if (entries.length === 0) return 'Belum ada data transaksi yang cukup untuk dianalisis pada periode ini.';
-     
+      
     const sortedUnits = [...entries].sort((a, b) => b[1].total - a[1].total);
     const topUnit = sortedUnits[0];
     const topPercentage = unitBreakdown.totalFilteredNominal > 0 ? ((topUnit[1].total / unitBreakdown.totalFilteredNominal) * 100).toFixed(1) : 0;
-     
+      
     return `Analisis Otomatis: Unit **${topUnit[0].toUpperCase()}** menjadi kontributor pendapatan terbesar dengan total **${formatRupiah(topUnit[1].total)}** (${topPercentage}% dari total omset). Rasio pelunasan kas tercatat ${paymentHealthStats.percentage}%. Verifikasi keuangan tervalidasi sistem RSUD Bukit Kerman.`;
   }, [unitBreakdown, paymentHealthStats, formatRupiah]);
 
@@ -416,7 +481,6 @@ export default function PusatCetakAdmin() {
       `_Diciptakan secara otomatis dari Pusat Cetak Admin SIMRS._`;
     window.open(`https://api.whatsapp.com/send?text=${text}`, '_blank');
     
-    // Ingest Egress log for WhatsApp sharing
     ingestAuditLog('EGRESS_WHATSAPP_SUMMARY', 'SYSTEM', `Financial summary sent via WhatsApp. Total records: ${filteredData.length}`);
   }, [startDate, endDate, filteredData.length, unitBreakdown.totalFilteredNominal, remunerasiPersen, spiAuditStatus, formatRupiah, ingestAuditLog]);
 
@@ -438,8 +502,7 @@ export default function PusatCetakAdmin() {
     ]);
     setShowPreviewModal(false);
     setShowThermalModal(false);
-     
-    // Ingest Log for Print Action
+      
     ingestAuditLog('PRINT_REPORT', mode, `Print action executed in mode: ${mode}`);
 
     setTimeout(() => {
@@ -457,71 +520,58 @@ export default function PusatCetakAdmin() {
     setShowPreviewModal(true);
   }, []);
 
-  const handleExportExcel = useCallback(() => {
+  // FITUR UTAMA BARU: EKSPOR FORMAT EXCEL (.XLSX) PRESISI
+  const handleExportXLSX = useCallback(async () => {
     if (filteredData.length === 0) {
-      showToast('Tidak ada data untuk diexport.');
+      showToast('Tidak ada data untuk diekspor ke Excel.');
       return;
     }
 
-    let htmlContent = `
-      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
-      <head><meta charset="utf-8"><title>Laporan Manajerial RSUD Bukit Kerman</title></head>
-      <body>
-        <h3>LAPORAN REKAPITULASI KEUANGAN & MANAJERIAL - RSUD BUKIT KERMAN</h3>
-        <p>Periode: ${startDate || 'Semua'} s/d ${endDate || 'Semua'} | Unit: ${jenisLayanan} | Penjamin: ${penjaminFilter} | Status SPI: ${spiAuditStatus ? 'Telah Diaudit' : 'Belum'}</p>
-        <table border="1">
-          <thead>
-            <tr style="background-color: #008080; color: #ffffff; font-weight: bold;">
-              <th>ID Transaksi</th>
-              <th>Tanggal</th>
-              <th>Modul Unit</th>
-              <th>No. RM / Reg</th>
-              <th>Nama Pasien</th>
-              <th>Keterangan / Poli / Ruang</th>
-              <th>Penjamin</th>
-              <th>Status Bayar</th>
-              <th>Nominal Biaya (Rp)</th>
-            </tr>
-          </thead>
-          <tbody>
-    `;
+    try {
+      const XLSX = await import('xlsx');
 
-    filteredData.forEach(row => {
-      htmlContent += `
-        <tr>
-          <td>${row.id}</td>
-          <td>${row.tanggal_record ? new Date(row.tanggal_record).toLocaleDateString('id-ID') : '-'}</td>
-          <td>${row.sumber_modul}</td>
-          <td>${row.no_rm || row.no_reg || '-'}</td>
-          <td>${row.nama_pasien || 'Tanpa Nama'}</td>
-          <td>${row.poli_tujuan || row.ruang || '-'}</td>
-          <td>${row.penjaminan || row.jenis_penjaminan || row.penjamin || 'UMUM'}</td>
-          <td>${row.status_bayar || 'LUNAS'}</td>
-          <td>${row.total_nominal}</td>
-        </tr>
-      `;
-    });
+      const exportRows = filteredData.map((row, index) => ({
+        'No': index + 1,
+        'ID Transaksi': row.id,
+        'Tanggal': row.tanggal_record ? new Date(row.tanggal_record).toLocaleDateString('id-ID') : '-',
+        'No. RM / Reg': row.no_rm || row.no_reg || '-',
+        'Nama Pasien': row.nama_pasien || 'Tanpa Nama',
+        'Unit Layanan': row.sumber_modul,
+        'Poli / Ruang': row.poli_tujuan || row.ruang || '-',
+        'Penjamin': row.penjaminan || row.jenis_penjaminan || row.penjamin || 'UMUM',
+        'Metode Bayar': row.metode_bayar || 'Tunai',
+        'Status Bayar': row.status_bayar || 'LUNAS',
+        'Nominal Biaya (Rp)': row.total_nominal
+      }));
 
-    htmlContent += `
-          </tbody>
-        </table>
-      </body>
-      </html>
-    `;
+      const worksheet = XLSX.utils.json_to_sheet(exportRows);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Laporan Manajerial RSUD');
 
-    const blob = new Blob([htmlContent], { type: 'application/vnd.ms-excel' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `Laporan_Manajerial_RSUD_Bukit_Kerman.xls`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    showToast('File Excel laporan berhasil diunduh.');
+      // Pengaturan Lebar Kolom
+      worksheet['!cols'] = [
+        { wch: 5 },   // No
+        { wch: 18 },  // ID Transaksi
+        { wch: 14 },  // Tanggal
+        { wch: 15 },  // No. RM
+        { wch: 26 },  // Nama Pasien
+        { wch: 18 },  // Unit Layanan
+        { wch: 18 },  // Poli / Ruang
+        { wch: 15 },  // Penjamin
+        { wch: 14 },  // Metode Bayar
+        { wch: 14 },  // Status Bayar
+        { wch: 20 }   // Nominal Biaya
+      ];
 
-    // Ingest Egress log for Excel export
-    ingestAuditLog('DATA_EGRESS_EXCEL_EXPORT', 'SYSTEM_BULK', `Financial report exported to Excel. Total records: ${filteredData.length}`);
-  }, [filteredData, startDate, endDate, jenisLayanan, penjaminFilter, spiAuditStatus, showToast, ingestAuditLog]);
+      XLSX.writeFile(workbook, `Laporan_Manajerial_RSUD_Bukit_Kerman_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      showToast('File Excel (.xlsx) berhasil diunduh.');
+
+      ingestAuditLog('DATA_EGRESS_XLSX_EXPORT', 'SYSTEM_BULK', `Laporan diekspor ke format XLSX. Total: ${filteredData.length} records.`);
+    } catch (err) {
+      console.error('Gagal mengekspor data ke XLSX:', err);
+      showToast('Gagal membuat file XLSX. Pastikan pustaka "xlsx" terpasang.');
+    }
+  }, [filteredData, showToast, ingestAuditLog]);
 
   return (
     <>
@@ -538,7 +588,7 @@ export default function PusatCetakAdmin() {
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
           }
-           
+            
           #app-screen-ui {
             display: none !important;
           }
@@ -738,7 +788,7 @@ export default function PusatCetakAdmin() {
                   <X className="w-5 h-5" />
                 </button>
               </div>
-               
+                
               <div className="p-8 overflow-y-auto flex-1 space-y-6 bg-slate-100 font-serif text-xs text-black">
                 <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-300 space-y-4 mx-auto max-w-2xl">
                   <div className="flex items-center justify-between border-b-4 border-double border-black pb-3 gap-4">
@@ -1016,7 +1066,7 @@ export default function PusatCetakAdmin() {
               <h1 className="text-2xl font-black text-slate-900">Pusat Cetak Laporan Manajerial &amp; Audit</h1>
               <p className="text-xs text-slate-500 font-medium">Rekapitulasi omset global rumah sakit lintas unit berdasarkan filter tanggal dan layanan.</p>
             </div>
-             
+              
             <div className="flex flex-wrap items-center gap-2">
               <button 
                 onClick={() => setShowColumnModal(true)}
@@ -1055,12 +1105,16 @@ export default function PusatCetakAdmin() {
               >
                 <RefreshCw className={`w-3.5 h-3.5 text-teal-600 ${isLoading ? 'animate-spin' : ''}`} /> Sinkronkan
               </button>
+
+              {/* TOMBOL EKSPOR EXCEL (.XLSX) UTAMA */}
               <button 
-                onClick={handleExportExcel}
+                onClick={handleExportXLSX}
                 className="px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-bold text-xs flex items-center gap-1.5 transition cursor-pointer shadow-sm"
+                title="Ekspor Laporan ke Format Excel (.xlsx)"
               >
-                <FileSpreadsheet className="w-3.5 h-3.5" /> Excel
+                <FileSpreadsheet className="w-3.5 h-3.5" /> Excel (.xlsx)
               </button>
+
               <button 
                 onClick={() => handlePrintAction('ALL')}
                 className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl font-bold text-xs flex items-center gap-1.5 shadow-md transition cursor-pointer"
@@ -1337,9 +1391,9 @@ export default function PusatCetakAdmin() {
                     currentPaginatedData.map((item, idx) => {
                       const isSelected = selectedIds.includes(item.id);
                       const sumber = item.sumber_modul?.toLowerCase() || '';
-                      const badgeColor = sumber.includes('rajal') ? 'bg-sky-50 text-sky-700 border-sky-200' :
-                                         sumber.includes('igd') ? 'bg-rose-50 text-rose-700 border-rose-200' :
-                                         sumber.includes('ranap') ? 'bg-indigo-50 text-indigo-700 border-indigo-200' :
+                      const badgeColor = sumber.includes('rajal') || sumber.includes('jalan') ? 'bg-sky-50 text-sky-700 border-sky-200' :
+                                         sumber.includes('igd') || sumber.includes('gawat') ? 'bg-rose-50 text-rose-700 border-rose-200 font-extrabold' :
+                                         sumber.includes('ranap') || sumber.includes('inap') ? 'bg-indigo-50 text-indigo-700 border-indigo-200' :
                                          'bg-amber-50 text-amber-700 border-amber-200';
                       const paddingClass = tableDensity === 'compact' ? 'py-2 px-3.5' : 'p-3.5';
 

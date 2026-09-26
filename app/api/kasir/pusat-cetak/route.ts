@@ -8,6 +8,9 @@ export async function GET(request: Request) {
     const endDate = searchParams.get('end_date');
     const jenisLayanan = searchParams.get('jenis_layanan') || 'RAJAL';
 
+    // Menerima limit dinamis dari query URL, default dinaikkan ke 5000 data
+    const limit = Number(searchParams.get('limit')) || 5000;
+
     let data: any[] = [];
     let error: any = null;
 
@@ -16,7 +19,8 @@ export async function GET(request: Request) {
       if (startDate && endDate) {
         query = query.gte('tanggal_transaksi', `${startDate}T00:00:00.000Z`).lte('tanggal_transaksi', `${endDate}T23:59:59.999Z`);
       }
-      const res = await query.order('tanggal_transaksi', { ascending: false }).limit(100);
+      // Mengubah .limit(100) menjadi .limit(limit)
+      const res = await query.order('tanggal_transaksi', { ascending: false }).limit(limit);
       data = res.data || [];
       error = res.error;
     } 
@@ -25,7 +29,8 @@ export async function GET(request: Request) {
       if (startDate && endDate) {
         query = query.gte('created_at', `${startDate}T00:00:00.000Z`).lte('created_at', `${endDate}T23:59:59.999Z`);
       }
-      const res = await query.order('created_at', { ascending: false }).limit(100);
+      // Mengubah .limit(100) menjadi .limit(limit)
+      const res = await query.order('created_at', { ascending: false }).limit(limit);
       data = res.data || [];
       error = res.error;
     } 
@@ -34,7 +39,8 @@ export async function GET(request: Request) {
       if (startDate && endDate) {
         query = query.gte('masuk_tgl', `${startDate}T00:00:00.000Z`).lte('masuk_tgl', `${endDate}T23:59:59.999Z`);
       }
-      const res = await query.order('masuk_tgl', { ascending: false }).limit(100);
+      // Mengubah .limit(100) menjadi .limit(limit)
+      const res = await query.order('masuk_tgl', { ascending: false }).limit(limit);
       data = res.data || [];
       error = res.error;
     } 
@@ -43,7 +49,8 @@ export async function GET(request: Request) {
       if (startDate && endDate) {
         query = query.gte('created_at', `${startDate}T00:00:00.000Z`).lte('created_at', `${endDate}T23:59:59.999Z`);
       }
-      const res = await query.order('created_at', { ascending: false }).limit(100);
+      // Mengubah .limit(100) menjadi .limit(limit)
+      const res = await query.order('created_at', { ascending: false }).limit(limit);
       data = res.data || [];
       error = res.error;
     }
