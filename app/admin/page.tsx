@@ -22,7 +22,8 @@ import {
   Wrench,
   ShieldAlert,
   Database,
-  Printer
+  Printer,
+  Download
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import AdminHeader from '@/components/admin/AdminHeader';
@@ -724,6 +725,38 @@ export default function AdminDashboardPage() {
 
               <div className="pt-4 border-t border-slate-100 flex items-center justify-between text-xs font-bold text-teal-600 group-hover:translate-x-1 transition-transform">
                 <span>Buka Pusat Cetak</span>
+                <ArrowRight className="w-4 h-4" />
+              </div>
+            </div>
+
+            {/* 13. Modul Backup Database Full SQL */}
+            <div 
+              onClick={() => router.push('/admin/backup')}
+              className="bg-white border border-sky-200/90 rounded-3xl p-6 shadow-lg shadow-sky-100/50 flex flex-col justify-between space-y-6 transition hover:shadow-xl hover:border-sky-400 cursor-pointer group relative overflow-hidden"
+            >
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="w-12 h-12 bg-sky-50 border border-sky-200 rounded-2xl text-sky-600 flex items-center justify-center shadow-sm group-hover:scale-105 transition">
+                    <Download className="w-6 h-6" />
+                  </div>
+                  <span className="bg-sky-600 text-white font-bold text-[10px] px-2.5 py-1 rounded-full shadow-sm flex items-center gap-1">
+                    <ShieldCheck className="w-3 h-3" />
+                    <span>System Dump</span>
+                  </span>
+                </div>
+
+                <div className="space-y-1">
+                  <h3 className="text-base font-bold text-slate-900 group-hover:text-sky-700 transition">
+                    Backup Database
+                  </h3>
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Unduh salinan cadangan lengkap skema tabel dan seluruh isi database RSUD (.sql).
+                  </p>
+                </div>
+              </div>
+
+              <div className="pt-4 border-t border-slate-100 flex items-center justify-between text-xs font-bold text-sky-600 group-hover:translate-x-1 transition-transform">
+                <span>Buka Pusat Backup</span>
                 <ArrowRight className="w-4 h-4" />
               </div>
             </div>
