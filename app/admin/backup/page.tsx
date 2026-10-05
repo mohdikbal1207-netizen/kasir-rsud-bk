@@ -12,7 +12,11 @@ import {
   ExternalLink,
   Clock,
   Zap,
-  Calendar
+  Calendar,
+  Copy,
+  Check,
+  FileCode,
+  Terminal
 } from 'lucide-react';
 
 export default function AdminBackupPage() {
@@ -20,6 +24,10 @@ export default function AdminBackupPage() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [driveLink, setDriveLink] = useState<string | null>(null);
+  
+  // State tambahan untuk kenyamanan admin (UX Refinement)
+  const [lastBackupTime, setLastBackupTime] = useState<string | null>(null);
+  const [copiedLink, setCopiedLink] = useState<boolean>(false);
 
   const handleExecuteBackup = async (actionType: 'download' | 'gdrive' | 'both' | 'auto_test') => {
     try {
@@ -27,6 +35,7 @@ export default function AdminBackupPage() {
       setSuccessMessage(null);
       setErrorMessage(null);
       setDriveLink(null);
+      setCopiedLink(false);
 
       // Jika simulasi auto test, gunakan parameter action=gdrive
       const targetAction = actionType === 'auto_test' ? 'gdrive' : actionType;
@@ -42,8 +51,12 @@ export default function AdminBackupPage() {
         throw new Error(errorText);
       }
 
-      const dateStr = new Date().toISOString().split('T')[0];
+      const now = new Date();
+      const dateStr = now.toISOString().split('T')[0];
+      const timeFormatted = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
       const fileName = `backup_full_supabase_${dateStr}.sql`;
+
+      setLastBackupTime(`${dateStr} pukul ${timeFormatted} WIB`);
 
       // Handling opsi 'gdrive' atau 'auto_test' (Response berupa JSON)
       if (actionType === 'gdrive' || actionType === 'auto_test') {
@@ -86,6 +99,12 @@ export default function AdminBackupPage() {
     }
   };
 
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedLink(true);
+    setTimeout(() => setCopiedLink(false), 2500);
+  };
+
   const isProcessing = loadingAction !== null;
 
   return (
@@ -94,7 +113,7 @@ export default function AdminBackupPage() {
         
         {/* Header Modul */}
         <div className="flex items-center gap-4">
-          <div className="p-4 bg-teal-50 text-teal-700 rounded-2xl border border-teal-100">
+          <div className="p-4 bg-teal-50 text-teal-700 rounded-2xl border border-teal-100 shadow-sm">
             <Database className="w-8 h-8" />
           </div>
           <div>
@@ -137,31 +156,39 @@ export default function AdminBackupPage() {
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
             <div className="bg-white/5 p-3 rounded-xl border border-white/10 space-y-1">
-              <span className="text-[10px] text-slate-400 font-semibold block flex items-center gap-1">
+              <span className="text-[10px] text-slate-400 font-semibold flex items-center gap-1">
                 <Calendar className="w-3 h-3 text-teal-400" /> Frekuensi Eksekusi
               </span>
               <p className="font-bold text-teal-200">Setiap Hari (Daily)</p>
             </div>
             <div className="bg-white/5 p-3 rounded-xl border border-white/10 space-y-1">
-              <span className="text-[10px] text-slate-400 font-semibold block flex items-center gap-1">
+              <span className="text-[10px] text-slate-400 font-semibold flex items-center gap-1">
                 <Clock className="w-3 h-3 text-teal-400" /> Jam Otomatis
               </span>
               <p className="font-bold text-teal-200">Pukul 00:00 WIB / Tengah Malam</p>
             </div>
             <div className="bg-white/5 p-3 rounded-xl border border-white/10 space-y-1">
-              <span className="text-[10px] text-slate-400 font-semibold block flex items-center gap-1">
+              <span className="text-[10px] text-slate-400 font-semibold flex items-center gap-1">
                 <CloudUpload className="w-3 h-3 text-teal-400" /> Target Penyimpanan
               </span>
               <p className="font-bold text-teal-200">Folder Google Drive RSUD</p>
             </div>
           </div>
 
+          {/* Riwayat Waktu Terakhir Dijalankan */}
+          {lastBackupTime && (
+            <div className="text-[11px] text-teal-300/90 bg-teal-950/60 px-3 py-1.5 rounded-lg border border-teal-800/50 flex items-center gap-2">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Sesi ini berhasil memproses backup terakhir pada: <strong className="text-white">{lastBackupTime}</strong></span>
+            </div>
+          )}
+
           <div className="pt-2 flex justify-end">
             <button
               type="button"
               onClick={() => handleExecuteBackup('auto_test')}
               disabled={isProcessing}
-              className="inline-flex items-center gap-1.5 bg-teal-500 hover:bg-teal-400 text-slate-950 font-black text-[11px] px-3.5 py-2 rounded-xl transition cursor-pointer disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 bg-teal-500 hover:bg-teal-400 text-slate-950 font-black text-[11px] px-3.5 py-2 rounded-xl transition cursor-pointer disabled:opacity-50 active:scale-95 shadow"
             >
               {loadingAction === 'auto_test' ? (
                 <>
@@ -186,7 +213,7 @@ export default function AdminBackupPage() {
               <span>{successMessage}</span>
             </div>
             {driveLink && (
-              <div className="pt-2 border-t border-emerald-200/60">
+              <div className="pt-2 border-t border-emerald-200/60 flex items-center justify-between gap-3">
                 <a 
                   href={driveLink} 
                   target="_blank" 
@@ -196,6 +223,24 @@ export default function AdminBackupPage() {
                   <span>Lihat File di Google Drive</span>
                   <ExternalLink className="w-3.5 h-3.5" />
                 </a>
+
+                <button
+                  type="button"
+                  onClick={() => copyToClipboard(driveLink)}
+                  className="inline-flex items-center gap-1 text-[11px] bg-emerald-100 hover:bg-emerald-200 text-emerald-800 px-2.5 py-1 rounded-lg transition"
+                >
+                  {copiedLink ? (
+                    <>
+                      <Check className="w-3 h-3 text-emerald-600" />
+                      <span>Tersalin!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3 h-3 text-emerald-600" />
+                      <span>Salin Link</span>
+                    </>
+                  )}
+                </button>
               </div>
             )}
           </div>
@@ -290,7 +335,7 @@ export default function AdminBackupPage() {
         <button
           onClick={() => handleExecuteBackup('download')}
           disabled={isProcessing}
-          className="w-full py-4 px-6 bg-teal-700 hover:bg-teal-800 text-white font-bold text-xs rounded-2xl transition flex items-center justify-center gap-2 cursor-pointer shadow-md disabled:opacity-50 disabled:cursor-not-allowed mt-4"
+          className="w-full py-4 px-6 bg-teal-700 hover:bg-teal-800 text-white font-bold text-xs rounded-2xl transition flex items-center justify-center gap-2 cursor-pointer shadow-md disabled:opacity-50 disabled:cursor-not-allowed mt-4 active:scale-98"
         >
           {isProcessing ? (
             <>
@@ -304,6 +349,23 @@ export default function AdminBackupPage() {
             </>
           )}
         </button>
+
+        {/* Panduan Ringkas Restorasi Data (Prosedur Darurat) */}
+        <div className="pt-4 border-t border-slate-100 space-y-3">
+          <div className="flex items-center gap-2 text-slate-800 font-bold text-xs">
+            <Terminal className="w-4 h-4 text-slate-600" />
+            <span>Panduan Pemulihan Data (Restore Procedures)</span>
+          </div>
+          <div className="p-4 bg-slate-900 text-slate-200 rounded-2xl font-mono text-[11px] space-y-2">
+            <p className="text-teal-400 font-sans font-semibold">Gunakan perintah psql untuk mengembalikan data jika server mengalami kegagalan:</p>
+            <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 text-slate-300 overflow-x-auto selection:bg-teal-500 selection:text-white">
+              <code>psql &quot;postgresql://postgres:[PASSWORD]@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres&quot; -f nama_file_backup.sql</code>
+            </div>
+            <p className="text-slate-400 text-[10px] font-sans">
+              Atau tempelkan isi teks file <code className="text-amber-300 font-mono">.sql</code> langsung ke menu <strong>SQL Editor</strong> di dashboard Supabase Console Anda.
+            </p>
+          </div>
+        </div>
 
       </div>
     </div>
