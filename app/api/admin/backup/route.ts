@@ -21,15 +21,23 @@ interface PKRow {
   column_name: string;
 }
 
-// Helper Function: Upload File ke Google Drive
+// Helper Function: Upload File ke Google Drive dengan Sanitasi Private Key
 async function uploadToGoogleDrive(sqlContent: string, fileName: string) {
   const clientEmail = process.env.GDRIVE_CLIENT_EMAIL;
-  const privateKey = process.env.GDRIVE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+  let rawPrivateKey = process.env.GDRIVE_PRIVATE_KEY;
   const folderId = process.env.GDRIVE_FOLDER_ID;
 
-  if (!clientEmail || !privateKey || !folderId) {
+  if (!clientEmail || !rawPrivateKey || !folderId) {
     throw new Error('Konfigurasi Google Drive (GDRIVE_CLIENT_EMAIL, GDRIVE_PRIVATE_KEY, GDRIVE_FOLDER_ID) belum diatur di .env.local');
   }
+
+  // Sanitasi Private Key agar dibaca secara sah oleh OpenSSL:
+  // 1. Hapus tanda petik ganda/tunggal pembungkus jika ada
+  // 2. Ubah escaping \n menjadi baris baru (newline) nyata
+  const privateKey = rawPrivateKey
+    .trim()
+    .replace(/^["']|["']$/g, '')
+    .replace(/\\n/g, '\n');
 
   const auth = new google.auth.GoogleAuth({
     credentials: {
