@@ -35,7 +35,7 @@ interface TagihanRecord {
   kasirNip?: string;
 }
 
-const daftarTindakanIGD: ItemTindakan[] = [
+const daftarTindakanIGDAwal: ItemTindakan[] = [
   { id: '1', nama: 'Jahit Luka - Kecil (1-5 jahitan)', tarif: 100000, kategori: 'Bedah Minor' },
   { id: '2', nama: 'Jahit Luka - Sedang (6-15 jahitan)', tarif: 150000, kategori: 'Bedah Minor' },
   { id: '3', nama: 'Jahit Luka - Besar (15-20 jahitan)', tarif: 200000, kategori: 'Bedah Minor' },
@@ -120,9 +120,34 @@ export default function FormKasirIGD() {
   const [showThermalModal, setShowThermalModal] = useState(false);
   const [showShiftRecapPrint, setShowShiftRecapPrint] = useState(false);
   const [showBatchPrint, setShowBatchPrint] = useState(false);
-  const [showAllRecapPrint, setShowAllRecapPrint] = useState(false); // Mode cetak rekap semua
+  const [showAllRecapPrint, setShowAllRecapPrint] = useState(false);
   const [singlePrintRecord, setSinglePrintRecord] = useState<TagihanRecord | null>(null);
   const [selectedCardIds, setSelectedCardIds] = useState<string[]>([]);
+
+  // State Modal Tambah Tabel Tindakan Baru
+  const [showAddTindakanModal, setShowAddTindakanModal] = useState(false);
+  const [newTindakan, setNewTindakan] = useState({
+    nama: '',
+    kategori: 'Bedah Minor',
+    tarif: 50000
+  });
+
+  // State Tambahan untuk Tindakan Baru (Di-load dari localStorage jika ada)
+  const [daftarTindakanIGD, setDaftarTindakanIGD] = useState<ItemTindakan[]>(daftarTindakanIGDAwal);
+
+  useEffect(() => {
+    const customSaved = localStorage.getItem('rsud_custom_tindakan');
+    if (customSaved) {
+      try {
+        const parsed = JSON.parse(customSaved);
+        if (Array.isArray(parsed)) {
+          setDaftarTindakanIGD([...daftarTindakanIGDAwal, ...parsed]);
+        }
+      } catch (e) {
+        console.error('Gagal parse custom tindakan', e);
+      }
+    }
+  }, []);
 
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'info' | 'error' } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -135,11 +160,54 @@ export default function FormKasirIGD() {
     }, 3500);
   };
 
-  const activeCashier = {
+  // STATE KASIR DINAMIS (MEMBACA SESI AKUN LOGIN SUPABASE / LOCALSTORAGE)
+  const [kasirProfile, setKasirProfile] = useState({
     nama: 'KONIA',
     id: '15588518525811158',
     role: 'VERIFIED KASIR'
-  };
+  });
+
+  useEffect(() => {
+    const fetchUserSession = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const userMetaName = user.user_metadata?.full_name || user.user_metadata?.nama || user.email?.split('@')[0];
+          const userMetaNip = user.user_metadata?.nip || user.id.substring(0, 16);
+          setKasirProfile({
+            nama: (userMetaName || 'KASIR ON DUTY').toUpperCase(),
+            id: userMetaNip || '15588518525811158',
+            role: 'VERIFIED KASIR'
+          });
+          return;
+        }
+      } catch (e) {
+        console.warn('Gagal fetch user dari supabase auth:', e);
+      }
+
+      const storedUser = localStorage.getItem('user_session') || localStorage.getItem('user_name');
+      if (storedUser) {
+        try {
+          const parsed = typeof storedUser === 'string' && storedUser.startsWith('{') ? JSON.parse(storedUser) : { nama: storedUser };
+          setKasirProfile({
+            nama: (parsed.nama || parsed.name || storedUser).toUpperCase(),
+            id: parsed.nip || parsed.id || '15588518525811158',
+            role: 'VERIFIED KASIR'
+          });
+        } catch (e) {
+          setKasirProfile({
+            nama: storedUser.toUpperCase(),
+            id: '15588518525811158',
+            role: 'VERIFIED KASIR'
+          });
+        }
+      }
+    };
+
+    fetchUserSession();
+  }, []);
+
+  const activeCashier = kasirProfile;
 
   const [formData, setFormData] = useState({
     nama: '',
@@ -165,7 +233,7 @@ export default function FormKasirIGD() {
 
   const [riwayatTagihan, setRiwayatTagihan] = useState<TagihanRecord[]>([]);
 
-  // BACA RIWAYAT DARI SUPABASE DENGAN PEMBATASAN LIMIT (MENCEGAH PEMBENGKAKAN LOG & EGRESS) DAN FALLBACK KE LOCALSTORAGE
+  // BACA RIWAYAT DARI SUPABASE
   const fetchRiwayatTagihan = async () => {
     try {
       const { data: headerData, error: headerError } = await supabase
@@ -256,7 +324,7 @@ export default function FormKasirIGD() {
   const kategoriList = useMemo(() => {
     const kat = new Set(daftarTindakanIGD.map(i => i.kategori));
     return ['Semua', ...Array.from(kat)];
-  }, []);
+  }, [daftarTindakanIGD]);
 
   const pasienPreviousHistory = useMemo(() => {
     if (!formData.noRm.trim()) return [];
@@ -304,6 +372,41 @@ export default function FormKasirIGD() {
     setSelectedItems(updated);
   };
 
+  // HANDLER MENAMBAH TINDAKAN / TABEL BARU
+  const handleAddNewTindakan = () => {
+    if (!newTindakan.nama.trim()) {
+      showToast('Nama tindakan tidak boleh kosong!', 'error');
+      return;
+    }
+
+    const newId = String(Date.now());
+    const itemBaru: ItemTindakan = {
+      id: newId,
+      nama: newTindakan.nama.trim(),
+      tarif: Number(newTindakan.tarif) || 0,
+      kategori: newTindakan.kategori.trim() || 'Lain-lain'
+    };
+
+    const updatedTindakan = [itemBaru, ...daftarTindakanIGD];
+    setDaftarTindakanIGD(updatedTindakan);
+
+    // Simpan ke localStorage agar tidak hilang saat refresh
+    const existingCustom = localStorage.getItem('rsud_custom_tindakan');
+    let customArr: ItemTindakan[] = [];
+    if (existingCustom) {
+      try { customArr = JSON.parse(existingCustom); } catch(e){}
+    }
+    customArr.push(itemBaru);
+    localStorage.setItem('rsud_custom_tindakan', JSON.stringify(customArr));
+
+    // Otomatis pilih 1 qty untuk item yang baru ditambahkan
+    setSelectedItems(prev => ({ ...prev, [newId]: 1 }));
+
+    setShowAddTindakanModal(false);
+    setNewTindakan({ nama: '', kategori: 'Bedah Minor', tarif: 50000 });
+    showToast(`Tindakan baru "${itemBaru.nama}" berhasil ditambahkan!`, 'success');
+  };
+
   const handleClearSelectedItems = () => {
     if (Object.keys(selectedItems).length === 0) return;
     if (confirm('Apakah Anda ingin mengosongkan semua tindakan yang dipilih?')) {
@@ -338,7 +441,7 @@ export default function FormKasirIGD() {
       const matchKat = selectedKategoriFilter === 'Semua' || item.kategori === selectedKategoriFilter;
       return matchSearch && matchKat;
     });
-  }, [searchTerm, selectedKategoriFilter]);
+  }, [searchTerm, selectedKategoriFilter, daftarTindakanIGD]);
 
   const filteredRiwayat = useMemo(() => {
     return riwayatTagihan.filter((item) => {
@@ -387,7 +490,6 @@ export default function FormKasirIGD() {
     return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(angka);
   };
 
-  // Cetak Formulir Form Input Saat Ini
   const handlePrint = () => {
     setSinglePrintRecord(null);
     setShowShiftRecapPrint(false);
@@ -398,7 +500,6 @@ export default function FormKasirIGD() {
     }, 100);
   };
 
-  // Cetak Kartu Pasien Spesifik (A4)
   const handlePrintSingleRecord = (record: TagihanRecord) => {
     setSinglePrintRecord(record);
     setShowShiftRecapPrint(false);
@@ -409,7 +510,6 @@ export default function FormKasirIGD() {
     }, 200);
   };
 
-  // Cetak Rekap Shift
   const handlePrintShiftRecap = () => {
     setSinglePrintRecord(null);
     setShowBatchPrint(false);
@@ -421,7 +521,6 @@ export default function FormKasirIGD() {
     }, 200);
   };
 
-  // Cetak Rekap Semua / Filtered List
   const handlePrintAllRecap = () => {
     if (filteredRiwayat.length === 0) {
       showToast('Tidak ada data rekap untuk dicetak!', 'error');
@@ -437,7 +536,6 @@ export default function FormKasirIGD() {
     }, 200);
   };
 
-  // Cetak Rekap Pasien Terpilih (Batch Print)
   const handlePrintBatchSelected = () => {
     if (selectedCardIds.length === 0) {
       showToast('Pilih minimal 1 pasien terlebih dahulu untuk dicetak!', 'error');
@@ -548,7 +646,7 @@ export default function FormKasirIGD() {
         const tarifSatuan = itemInfo ? itemInfo.tarif : 0;
         return {
           pemeriksaan_id: headerId,
-          tindakan_id: Number(tindakanId),
+          tindakan_id: Number(tindakanId) || 0,
           jumlah_qty: qty,
           tarif_satuan: tarifSatuan,
           subtotal: qty * tarifSatuan
@@ -610,7 +708,6 @@ export default function FormKasirIGD() {
     }
   };
 
-  // FITUR EKSPOR EXCEL FORMAT RESMI (.xls / Spreadsheet Styled)
   const handleExportExcel = () => {
     if (filteredRiwayat.length === 0) {
       showToast('Tidak ada data yang dapat diexport.', 'error');
@@ -701,7 +798,6 @@ export default function FormKasirIGD() {
     showToast('Ringkasan tagihan disalin ke clipboard!', 'success');
   };
 
-  // Aktifkan cetak untuk data yang sedang aktif (Entah single record atau form input)
   const activePrintTarget = singlePrintRecord || {
     noRm: formData.noRm,
     namaPasien: formData.nama,
@@ -719,7 +815,6 @@ export default function FormKasirIGD() {
   return (
     <div className="min-h-screen flex flex-col bg-slate-100 font-sans relative pb-16 lg:pb-0">
       
-      {/* STYLING TAMBAHAN KHUSUS PRINT AGAR RAPI & PROFESIONAL */}
       <style jsx global>{`
         @media print {
           @page {
@@ -761,7 +856,7 @@ export default function FormKasirIGD() {
         className="hidden" 
       />
 
-      {/* BAGIAN INTERAKTIF LAYAR (DISEMBUNYIKAN SAAT PRINT PADA SEMUA TAB) */}
+      {/* BAGIAN INTERAKTIF LAYAR */}
       <div className="print:hidden">
         <KasirHeader 
           title="RSUD BUKIT KERMAN"
@@ -898,7 +993,6 @@ export default function FormKasirIGD() {
                       />
                     </div>
 
-                    {/* AUTOCOMPLETE SUGGESTIONS DROPDOWN */}
                     {patientSuggestions.length > 0 && formData.noRm.trim() !== '' && pasienPreviousHistory.length === 0 && (
                       <div className="absolute z-20 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl max-h-48 overflow-y-auto">
                         <div className="p-2 text-[10px] font-bold text-slate-400 uppercase border-b border-slate-100">Saran Riwayat Pasien:</div>
@@ -1026,6 +1120,15 @@ export default function FormKasirIGD() {
                 <h3 className="text-xs font-black uppercase text-slate-900 tracking-wider flex items-center gap-2">
                   <Stethoscope className="w-4 h-4 text-sky-600" /> Daftar Tindakan &amp; Pemeriksaan IGD
                 </h3>
+
+                {/* TOMBOL TAMBAH TABEL / TINDAKAN BARU */}
+                <button
+                  onClick={() => setShowAddTindakanModal(true)}
+                  className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm ml-2"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Tambah Tindakan Baru
+                </button>
+
                 {Object.keys(selectedItems).length > 0 && (
                   <button
                     onClick={handleClearSelectedItems}
@@ -1048,7 +1151,7 @@ export default function FormKasirIGD() {
             </div>
           </div>
 
-          {/* BARIS TINDAKAN FAVORIT (QUICK SHORTCUTS) */}
+          {/* BARIS TINDAKAN FAVORIT */}
           <div className="bg-sky-50/70 border border-sky-200 p-3.5 rounded-2xl mb-4">
             <div className="flex items-center gap-1.5 mb-2 text-sky-900 text-[11px] font-black uppercase">
               <Zap className="w-3.5 h-3.5 text-amber-500" /> Pintasan Cepat Tindakan Sering Digunakan:
@@ -1071,7 +1174,7 @@ export default function FormKasirIGD() {
             </div>
           </div>
 
-          {/* FILTER KATEGORI (CHIPS/BADGES) */}
+          {/* FILTER KATEGORI */}
           <div className="flex flex-wrap gap-1.5 mb-4">
             {kategoriList.map((kat) => (
               <button
@@ -1312,7 +1415,7 @@ export default function FormKasirIGD() {
       </div>
       )}
 
-      {/* TAB 2: DAFTAR RIWAYAT & KARTU TAGIHAN (UPDATED: MODEL KARTU GRID) */}
+      {/* TAB 2: DAFTAR RIWAYAT & KARTU TAGIHAN */}
       {activeTab === 'riwayat' && (
         <div className="space-y-6">
          
@@ -1494,7 +1597,7 @@ export default function FormKasirIGD() {
             </div>
           </div>
 
-          {/* DAFTAR RIWAYAT - TAMPILAN KARTU GRID (CARD VIEW MODEL) */}
+          {/* DAFTAR RIWAYAT GRID */}
           {filteredRiwayat.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
               {filteredRiwayat.map((item) => {
@@ -1508,7 +1611,6 @@ export default function FormKasirIGD() {
                       isSelected ? 'border-indigo-500 ring-2 ring-indigo-500/20 bg-indigo-50/10' : 'border-slate-200 hover:border-slate-300'
                     }`}
                   >
-                    {/* HEADER KARTU */}
                     <div>
                       <div className="flex items-start justify-between gap-2 mb-3 border-b border-slate-100 pb-3">
                         <div className="flex items-center gap-2.5">
@@ -1538,7 +1640,6 @@ export default function FormKasirIGD() {
                         </span>
                     </div>
 
-                    {/* BIODATA PASIEN */}
                     <div className="space-y-1 mb-4">
                       <div className="flex justify-between items-baseline">
                         <h4 className="text-sm font-black text-slate-900 truncate max-w-[180px]" title={item.namaPasien}>
@@ -1557,7 +1658,6 @@ export default function FormKasirIGD() {
                       </p>
                     </div>
 
-                    {/* BADGES METODE & TRIASE */}
                     <div className="flex flex-wrap gap-1.5 mb-4">
                       <span className={`px-2 py-0.5 text-[10px] font-bold rounded-md ${
                         item.triase === 'Merah' ? 'bg-rose-100 text-rose-800 border border-rose-200' :
@@ -1576,7 +1676,6 @@ export default function FormKasirIGD() {
                       </span>
                   </div>
 
-                  {/* SUMMARY ITEM & PETUGAS */}
                   <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100 text-[11px] space-y-1 mb-4">
                     <div className="flex justify-between text-slate-600">
                       <span>Jumlah Tindakan:</span>
@@ -1589,7 +1688,6 @@ export default function FormKasirIGD() {
                   </div>
                 </div>
 
-                {/* FOOTER KARTU & ACTION BUTTONS */}
                 <div className="border-t border-slate-100 pt-3 mt-2">
                   <div className="flex justify-between items-center mb-3">
                     <span className="text-[10px] font-extrabold uppercase text-slate-400">Total Tarif</span>
@@ -1638,10 +1736,9 @@ export default function FormKasirIGD() {
   </div>
 
   {/* ========================================================================= */}
-  {/* TAMPILAN KHUSUS CETAK RESMI (PRINT-ONLY LAYOUT) - DIRAPIKAN & PROFESIONAL */}
+  {/* TAMPILAN KHUSUS CETAK RESMI (PRINT-ONLY LAYOUT) */}
   {/* ========================================================================= */}
   {!showShiftRecapPrint && !showBatchPrint && !showAllRecapPrint ? (
-    /* 1. CETAK A4 PERINCIAN BIAYA SATUAN PASIEN */
     <div className="hidden print:block bg-white text-black p-8 font-sans max-w-[210mm] mx-auto">
       <div className="flex items-center justify-between border-b-2 border-black pb-4 mb-6">
         <div className="w-16 h-16 flex items-center justify-center">
@@ -1665,7 +1762,6 @@ export default function FormKasirIGD() {
         </div>
       </div>
 
-      {/* DATA PASIEN PRINT FORMAT */}
       <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs mb-6 border border-black p-4 bg-slate-50/20">
         <div><span className="font-bold">No. Rekam Medis (RM):</span> {activePrintTarget.noRm || '-'}</div>
         <div><span className="font-bold">Tanggal Pemeriksaan:</span> {activePrintTarget.tanggal || '-'}</div>
@@ -1676,7 +1772,6 @@ export default function FormKasirIGD() {
         <div className="col-span-2"><span className="font-bold">Alamat:</span> {activePrintTarget.alamat || '-'}</div>
       </div>
 
-      {/* TABEL ITEM TINDAKAN PRINT FORMAT */}
       <table className="w-full text-left border-collapse text-xs mb-6 border border-black">
         <thead>
           <tr className="border-b-2 border-black bg-slate-100">
@@ -1707,13 +1802,11 @@ export default function FormKasirIGD() {
         </tbody>
       </table>
 
-      {/* TOTAL PRINT FORMAT */}
       <div className="flex justify-between items-center border-2 border-black p-3 mb-8 text-sm font-black bg-slate-50">
         <span>TOTAL KESELURUHAN BIAYA TINDAKAN IGD:</span>
         <span className="text-base font-mono">{formatRupiah(activePrintTarget.totalTarif)}</span>
       </div>
 
-      {/* TTD PRINT FORMAT */}
       <div className="grid grid-cols-2 gap-8 text-center text-xs mt-10">
         <div>
           <p className="mb-20">Pasien / Keluarga Pasien</p>
@@ -1727,7 +1820,6 @@ export default function FormKasirIGD() {
       </div>
     </div>
   ) : showBatchPrint ? (
-    /* 2. CETAK REKAP PASIEN TERPILIH (BATCH MASS PRINT) */
     <div className="hidden print:block bg-white text-black p-8 font-sans max-w-[210mm] mx-auto">
       <div className="flex items-center justify-between border-b-2 border-black pb-4 mb-6">
         <div className="w-16 h-16 flex items-center justify-center">
@@ -1787,7 +1879,6 @@ export default function FormKasirIGD() {
       </div>
     </div>
   ) : showAllRecapPrint ? (
-    /* 3. CETAK REKAP SEMUA / FILTERED LIST */
     <div className="hidden print:block bg-white text-black p-8 font-sans max-w-[210mm] mx-auto">
       <div className="flex items-center justify-between border-b-2 border-black pb-4 mb-6">
         <div className="w-16 h-16 flex items-center justify-center">
@@ -1845,7 +1936,6 @@ export default function FormKasirIGD() {
       </div>
     </div>
   ) : (
-    /* 4. PRINT LAYOUT KHUSUS REKAP SHIFT KEUANGAN */
     <div className="hidden print:block bg-white text-black p-8 font-sans max-w-[210mm] mx-auto">
       <div className="flex items-center justify-between border-b-2 border-black pb-4 mb-6">
         <div className="w-16 h-16 flex items-center justify-center">
@@ -1910,7 +2000,73 @@ export default function FormKasirIGD() {
     </div>
   )}
 
-  {/* MODAL PRATINJAU STRUK (*PREVIEW MODAL*) */}
+  {/* MODAL TAMBAH TINDAKAN / TABEL BARU */}
+  {showAddTindakanModal && (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 print:hidden">
+      <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
+        <div className="flex items-center justify-between border-b border-slate-200 pb-3 mb-4">
+          <h3 className="text-xs font-black uppercase text-slate-900 tracking-wider flex items-center gap-2">
+            <Plus className="w-4 h-4 text-emerald-600" /> Tambah Tindakan / Tabel Baru
+          </h3>
+          <button onClick={() => setShowAddTindakanModal(false)} className="p-1.5 hover:bg-slate-100 rounded-full transition cursor-pointer">
+            <X className="w-4 h-4 text-slate-600" />
+          </button>
+        </div>
+        
+        <div className="space-y-4 mb-6">
+          <div>
+            <label className="block text-[11px] font-bold uppercase text-slate-700 mb-1">Nama Tindakan / Pemeriksaan</label>
+            <input 
+              type="text" 
+              value={newTindakan.nama}
+              onChange={(e) => setNewTindakan({ ...newTindakan, nama: e.target.value })}
+              placeholder="Contoh: Pemasangan Bidai Khusus" 
+              className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-bold uppercase text-slate-700 mb-1">Kategori Tindakan</label>
+            <input 
+              type="text" 
+              value={newTindakan.kategori}
+              onChange={(e) => setNewTindakan({ ...newTindakan, kategori: e.target.value })}
+              placeholder="Contoh: Bedah Minor / Tindakan Khusus" 
+              className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-bold uppercase text-slate-700 mb-1">Tarif (Rp)</label>
+            <input 
+              type="number" 
+              value={newTindakan.tarif}
+              onChange={(e) => setNewTindakan({ ...newTindakan, tarif: Number(e.target.value) || 0 })}
+              placeholder="50000" 
+              className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500"
+            />
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={() => setShowAddTindakanModal(false)}
+            className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold transition cursor-pointer"
+          >
+            Batal
+          </button>
+          <button
+            onClick={handleAddNewTindakan}
+            className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow"
+          >
+            <Save className="w-3.5 h-3.5" /> Simpan Tindakan
+          </button>
+        </div>
+      </div>
+    </div>
+  )}
+
+  {/* MODAL PRATINJAU STRUK */}
   {showPreviewModal && (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 print:hidden">
       <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200">
@@ -2030,7 +2186,6 @@ export default function FormKasirIGD() {
           </button>
         </div>
 
-        {/* STATUS BANNER */}
         <div className={`p-4 rounded-2xl mb-5 flex items-center justify-between border ${
           selectedDetailRecord.status === 'Disetujui' ? 'bg-emerald-50 border-emerald-200 text-emerald-900' :
           selectedDetailRecord.status === 'Direvisi' ? 'bg-rose-50 border-rose-200 text-rose-900' :
@@ -2045,7 +2200,6 @@ export default function FormKasirIGD() {
           </span>
         </div>
 
-        {/* BIODATA PASIEN */}
         <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 mb-5 space-y-2 text-xs">
           <div className="grid grid-cols-2 gap-2">
             <div><span className="text-slate-500 font-medium">No. RM:</span> <span className="font-bold text-slate-900">{selectedDetailRecord.noRm}</span></div>
@@ -2058,7 +2212,6 @@ export default function FormKasirIGD() {
           </div>
         </div>
 
-        {/* TABEL ITEM RINCIAN */}
         <h4 className="text-xs font-black uppercase text-slate-900 mb-2">Item Pemeriksaan &amp; Tindakan Medis</h4>
         <div className="border border-slate-200 rounded-2xl overflow-hidden mb-6">
           <table className="w-full text-left border-collapse text-xs">
@@ -2088,13 +2241,11 @@ export default function FormKasirIGD() {
           </table>
         </div>
 
-        {/* TOTAL */}
         <div className="flex items-center justify-between bg-slate-900 text-white p-4 rounded-2xl mb-6">
           <span className="text-xs font-bold uppercase tracking-wider text-slate-300">Total Keseluruhan Biaya</span>
           <span className="text-lg font-black font-mono text-sky-400">{formatRupiah(selectedDetailRecord.totalTarif)}</span>
         </div>
 
-        {/* TOMBOL TUTUP & CETAK ULANG */}
         <div className="flex justify-between items-center">
           <button
             onClick={() => {
